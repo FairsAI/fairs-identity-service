@@ -1,0 +1,263 @@
+/**
+ * User Repository
+ * 
+ * Manages user data storage and retrieval operations
+ */
+
+const { dbConnection } = require('../database/db-connection');
+const { logger } = require('../utils/logger');
+const bcrypt = require('bcrypt');
+
+class UserRepository {
+  /**
+   * Get user by ID
+   * @param {number} userId - User ID
+   * @returns {Promise<Object|null>} User object or null if not found
+   */
+  async getUserById(userId) {
+    try {
+      logger.debug('Getting user by ID', { userId });
+      
+      const query = `
+        SELECT id, email, first_name, last_name, phone, created_at, updated_at, is_active
+        FROM users 
+        WHERE id = $1 AND is_active = true
+      `;
+      
+      const result = await dbConnection.query(query, [userId]);
+      
+      if (result.length === 0) {
+        logger.debug('User not found', { userId });
+        return null;
+      }
+      
+      logger.debug('User found', { userId, email: result[0].email });
+      return result[0];
+    } catch (error) {
+      logger.error('Error getting user by ID', { error: error.message, userId });
+      throw error;
+    }
+  }
+
+  /**
+   * Get user by email
+   * @param {string} email - User email
+   * @returns {Promise<Object|null>} User object or null if not found
+   */
+  async getUserByEmail(email) {
+    try {
+      logger.debug('Getting user by email', { email });
+      
+      const query = `
+        SELECT id, email, first_name, last_name, phone, created_at, updated_at, is_active
+        FROM users 
+        WHERE email = $1 AND is_active = true
+      `;
+      
+      const result = await dbConnection.query(query, [email.toLowerCase()]);
+      
+      if (result.length === 0) {
+        logger.debug('User not found by email', { email });
+        return null;
+      }
+      
+      logger.debug('User found by email', { userId: result[0].id, email });
+      return result[0];
+    } catch (error) {
+      logger.error('Error getting user by email', { error: error.message, email });
+      throw error;
+    }
+  }
+
+  /**
+   * Create a new user
+   * @param {Object} userData - User data
+   * @param {string} userData.email - User email
+   * @param {string} userData.firstName - User first name
+   * @param {string} userData.lastName - User last name
+   * @param {string} userData.phone - User phone number
+   * @param {string} userData.password - User password (optional)
+   * @returns {Promise<Object>} Created user object
+   */
+  async createUser(userData) {
+    try {
+      const { email, firstName, lastName, phone, password } = userData;
+      
+      logger.debug('Creating new user', { email, firstName, lastName });
+      
+      // Check if user already exists
+      const existingUser = await this.getUserByEmail(email);
+      if (existingUser) {
+        throw new Error('User with this email already exists');
+      }
+      
+      // Hash password if provided
+      let hashedPassword = null;
+      if (password) {
+        hashedPassword = await bcrypt.hash(password, 12);
+      }
+      
+      const query = `
+        INSERT INTO users (email, first_name, last_name, phone, password_hash, created_at, updated_at, is_active)
+        VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), true)
+        RETURNING id, email, first_name, last_name, phone, created_at, updated_at, is_active
+      `;
+      
+      const values = [
+        email.toLowerCase(),
+        firstName,
+        lastName,
+        phone || null,
+        hashedPassword
+      ];
+      
+      const result = await dbConnection.query(query, values);
+      
+      logger.info('User created successfully', { 
+        userId: result[0].id, 
+        email: result[0].email 
+      });
+      
+      return result[0];
+    } catch (error) {
+      logger.error('Error creating user', { 
+        error: error.message, 
+        email: userData.email 
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Update user information
+   * @param {number} userId - User ID
+   * @param {Object} updateData - Data to update
+   * @returns {Promise<Object>} Updated user object
+   */
+  async updateUser(userId, updateData) {
+    try {
+      logger.debug('Updating user', { userId, fields: Object.keys(updateData) });
+      
+      const allowedFields = ['first_name', 'last_name', 'phone'];
+      const updates = [];
+      const values = [];
+      let paramIndex = 1;
+      
+      for (const [key, value] of Object.entries(updateData)) {
+        if (allowedFields.includes(key)) {
+          updates.push(`${key} = $${paramIndex}`);
+          values.push(value);
+          paramIndex++;
+        }
+      }
+      
+      if (updates.length === 0) {
+        throw new Error('No valid fields to update');
+      }
+      
+      updates.push(`updated_at = NOW()`);
+      values.push(userId);
+      
+      const query = `
+        UPDATE users 
+        SET ${updates.join(', ')}
+        WHERE id = $${paramIndex} AND is_active = true
+        RETURNING id, email, first_name, last_name, phone, created_at, updated_at, is_active
+      `;
+      
+      const result = await dbConnection.query(query, values);
+      
+      if (result.length === 0) {
+        throw new Error('User not found or inactive');
+      }
+      
+      logger.info('User updated successfully', { userId });
+      return result[0];
+    } catch (error) {
+      logger.error('Error updating user', { error: error.message, userId });
+      throw error;
+    }
+  }
+
+  /**
+   * Deactivate user (soft delete)
+   * @param {number} userId - User ID
+   * @returns {Promise<boolean>} Success status
+   */
+  async deactivateUser(userId) {
+    try {
+      logger.debug('Deactivating user', { userId });
+      
+      const query = `
+        UPDATE users 
+        SET is_active = false, updated_at = NOW()
+        WHERE id = $1 AND is_active = true
+      `;
+      
+      const result = await dbConnection.query(query, [userId]);
+      
+      if (result.rowCount === 0) {
+        throw new Error('User not found or already inactive');
+      }
+      
+      logger.info('User deactivated successfully', { userId });
+      return true;
+    } catch (error) {
+      logger.error('Error deactivating user', { error: error.message, userId });
+      throw error;
+    }
+  }
+
+  /**
+   * Verify user password
+   * @param {string} email - User email
+   * @param {string} password - Password to verify
+   * @returns {Promise<Object|null>} User object if password is correct, null otherwise
+   */
+  async verifyPassword(email, password) {
+    try {
+      logger.debug('Verifying user password', { email });
+      
+      const query = `
+        SELECT id, email, first_name, last_name, phone, password_hash, created_at, updated_at, is_active
+        FROM users 
+        WHERE email = $1 AND is_active = true
+      `;
+      
+      const result = await dbConnection.query(query, [email.toLowerCase()]);
+      
+      if (result.length === 0) {
+        logger.debug('User not found for password verification', { email });
+        return null;
+      }
+      
+      const user = result[0];
+      
+      if (!user.password_hash) {
+        logger.debug('User has no password set', { email });
+        return null;
+      }
+      
+      const isValid = await bcrypt.compare(password, user.password_hash);
+      
+      if (!isValid) {
+        logger.debug('Invalid password', { email });
+        return null;
+      }
+      
+      // Remove password hash from returned user object
+      delete user.password_hash;
+      
+      logger.debug('Password verified successfully', { userId: user.id, email });
+      return user;
+    } catch (error) {
+      logger.error('Error verifying password', { error: error.message, email });
+      throw error;
+    }
+  }
+}
+
+// Create singleton instance
+const userRepository = new UserRepository();
+
+module.exports = { userRepository }; 

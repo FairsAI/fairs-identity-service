@@ -104,7 +104,8 @@ const databaseConfig = {
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   ssl: process.env.DB_SSL === 'true',
-  poolSize: parseInt(process.env.DB_POOL_SIZE || '20', 10)
+  poolSize: parseInt(process.env.DB_POOL_SIZE || '20', 10),
+  schema: process.env.DB_SCHEMA || 'identity_service'
 };
 
 // Special handling for test environment ONLY

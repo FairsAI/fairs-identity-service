@@ -87,8 +87,8 @@ class DeviceFingerprintRepository {
       // Convert arrays and objects to strings
       const pluginsStr = Array.isArray(plugins) ? plugins.join(',') : String(plugins || '');
       const fontsStr = Array.isArray(fonts) ? fonts.join(',') : String(fonts || '');
-      const batteryStr = typeof battery === 'object' ? JSON.stringify(battery) : String(battery || '');
-      const networkInfoStr = typeof networkInfo === 'object' ? JSON.stringify(networkInfo) : String(networkInfo || '');
+      const batteryStr = battery && typeof battery === 'object' ? JSON.stringify(battery) : (battery ? String(battery) : null);
+      const networkInfoStr = networkInfo && typeof networkInfo === 'object' ? JSON.stringify(networkInfo) : (networkInfo ? String(networkInfo) : null);
       
       const values = [
         fingerprintHash,
@@ -111,7 +111,7 @@ class DeviceFingerprintRepository {
         osVersion || null,
         isMobile || false,
         networkInfoStr,
-        Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null,
+        metadata && Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null,
         1.0 // Initial confidence score
       ];
       
