@@ -4,6 +4,9 @@
  * Main entry point for the identity service application
  */
 
+// Load environment variables from .env file
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
