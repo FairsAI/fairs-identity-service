@@ -15,6 +15,7 @@ const config = require('./src/config');
 
 // Import routes
 const identityRoutes = require('./src/routes/identity-api');
+const enhancedSchemaRoutes = require('./src/routes/enhanced-schema-api');
 
 // Create Express application
 const app = express();
@@ -57,6 +58,9 @@ app.get('/health', (req, res) => {
 // API routes
 app.use('/api', identityRoutes);
 
+// Enhanced Schema routes for multiple addresses and payment methods
+app.use('/api', enhancedSchemaRoutes);
+
 // 404 handler
 app.use('*', (req, res) => {
   res.status(404).json({
@@ -82,11 +86,65 @@ app.use((error, req, res, next) => {
   });
 });
 
+/**
+ * Database Connection Verification
+ * Ensures we're connected to the correct database and schema for Enhanced Schema
+ */
+async function verifyDatabaseConnection() {
+  try {
+    const { dbConnection } = require('./src/database/db-connection');
+    
+    const result = await dbConnection.query(`
+      SELECT 
+        current_database() as database_name,
+        current_schema() as schema_name,
+        current_user as user_name
+    `);
+    
+    console.log('🔍 Database Connection Verification:', result[0]);
+    
+    // MUST return:
+    // database_name: 'fairs_commerce'
+    // schema_name: 'identity_service' 
+    
+    if (result[0].database_name !== 'fairs_commerce') {
+      throw new Error(`❌ Wrong database! Connected to: ${result[0].database_name}, expected: fairs_commerce`);
+    }
+    
+    if (result[0].schema_name !== 'identity_service') {
+      console.log(`⚠️ Schema notice: Currently in '${result[0].schema_name}' schema, Enhanced Schema tables are in 'identity_service' schema`);
+    }
+    
+    console.log('✅ Database verification passed - Connected to fairs_commerce database');
+    
+    // Verify Enhanced Schema tables exist
+    const tableCheck = await dbConnection.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'identity_service' 
+      AND table_name IN ('user_payment_methods', 'user_addresses')
+      ORDER BY table_name
+    `);
+    
+    console.log('🎯 Enhanced Schema tables found:', tableCheck.map(r => r.table_name));
+    
+    if (tableCheck.length !== 2) {
+      console.log('⚠️ Warning: Not all Enhanced Schema tables found. Expected: user_addresses, user_payment_methods');
+    }
+    
+  } catch (error) {
+    console.error('❌ Database verification failed:', error.message);
+    if (process.env.NODE_ENV !== 'development') {
+      throw error; // Fail startup in production if database verification fails
+    }
+  }
+}
+
 // Start server
 const PORT = process.env.IDENTITY_SERVICE_PORT || process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 
-app.listen(PORT, HOST, () => {
+app.listen(PORT, HOST, async () => {
   logger.info({
     message: 'Server started successfully',
     port: PORT,
@@ -96,6 +154,9 @@ app.listen(PORT, HOST, () => {
   
   console.log(`🚀 Fairs Identity Service running on http://${HOST}:${PORT}`);
   console.log(`📊 Health check available at http://${HOST}:${PORT}/health`);
+  
+  // Verify database connection after server starts
+  await verifyDatabaseConnection();
 });
 
 module.exports = app; 

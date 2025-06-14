@@ -2,6 +2,7 @@
  * Database Connection Module
  * 
  * Provides database connection and query interface for the identity service
+ * SINGLE CONNECTION TO fairs_commerce DATABASE ONLY
  */
 
 const { Pool } = require('pg');
@@ -15,7 +16,7 @@ class DatabaseConnection {
   }
 
   /**
-   * Initialize database connection
+   * Initialize database connection - EXPLICIT fairs_commerce connection
    */
   async initialize() {
     try {
@@ -26,47 +27,64 @@ class DatabaseConnection {
         return;
       }
 
-      this.pool = new Pool({
-        host: config.database.host,
-        port: config.database.port,
-        database: config.database.name,
-        user: config.database.user,
-        password: config.database.password,
-        ssl: config.database.ssl,
-        max: config.database.poolSize,
+      // EXPLICIT DATABASE CONFIGURATION - NO AMBIGUITY
+      const dbConfig = {
+        host: process.env.DB_HOST || 'localhost',
+        port: parseInt(process.env.DB_PORT || '5432', 10),
+        database: 'fairs_commerce',              // HARDCODED - Enhanced Schema database
+        user: process.env.DB_USER || 'postgres',
+        password: process.env.DB_PASSWORD,
+        ssl: process.env.DB_SSL === 'true',
+        max: parseInt(process.env.DB_POOL_SIZE || '20', 10),
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 2000,
-        schema: config.database.schema || 'identity_service',
+      };
+
+      logger.info('🎯 ENHANCED SCHEMA: Connecting explicitly to fairs_commerce database', {
+        host: dbConfig.host,
+        database: dbConfig.database,
+        schema: 'identity_service'
       });
 
-      // Test the connection and set schema
+      this.pool = new Pool(dbConfig);
+
+      // Test the connection and set schema EXPLICITLY
       const client = await this.pool.connect();
       
-      // Set search path to use the specific schema
-      if (config.database.schema) {
-        await client.query(`SET search_path TO ${config.database.schema}, public`);
-      }
+      // EXPLICIT SCHEMA PATH - identity_service ONLY
+      await client.query('SET search_path TO identity_service, public');
       
-      await client.query('SELECT NOW()');
+      // Verify we're connected to the right database
+      const dbCheck = await client.query('SELECT current_database() as db, current_schema() as schema');
+      logger.info('✅ ENHANCED SCHEMA: Database connection verified', {
+        database: dbCheck.rows[0].db,
+        schema: dbCheck.rows[0].schema
+      });
+      
+      // Verify Enhanced Schema tables exist
+      const tableCheck = await client.query(`
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'identity_service' 
+        AND table_name IN ('user_payment_methods', 'user_addresses')
+      `);
+      logger.info('✅ ENHANCED SCHEMA: Tables verified', {
+        tables: tableCheck.rows.map(r => r.table_name)
+      });
+      
       client.release();
 
       this.isConnected = true;
-      logger.info('Database connection established successfully', {
-        host: config.database.host,
-        database: config.database.name,
-        poolSize: config.database.poolSize
-      });
+      logger.info('🚀 ENHANCED SCHEMA: Database connection established successfully');
 
     } catch (error) {
-      logger.error('Failed to initialize database connection', {
-        error: error.message,
-        host: config.database.host,
-        database: config.database.name
+      logger.error('❌ ENHANCED SCHEMA: Failed to initialize database connection', {
+        error: error.message
       });
       
       // For development, we'll continue without database for now
       if (config.env === 'development') {
-        logger.warn('Continuing without database connection in development mode');
+        logger.warn('⚠️ Continuing without database connection in development mode');
         this.isConnected = false;
         return;
       }
@@ -76,7 +94,7 @@ class DatabaseConnection {
   }
 
   /**
-   * Execute a query
+   * Execute a query - ENHANCED SCHEMA ONLY
    * @param {string} text - SQL query text
    * @param {Array} params - Query parameters
    * @returns {Promise<Array>} Query results
@@ -100,10 +118,17 @@ class DatabaseConnection {
 
     try {
       const start = Date.now();
-      const result = await this.pool.query(text, params);
+      
+      // Get client and ensure correct schema
+      const client = await this.pool.connect();
+      await client.query('SET search_path TO identity_service, public');
+      
+      const result = await client.query(text, params);
+      client.release();
+      
       const duration = Date.now() - start;
 
-      logger.debug('Database query executed', {
+      logger.debug('🎯 ENHANCED SCHEMA: Database query executed', {
         duration: `${duration}ms`,
         rows: result.rowCount,
         query: text.substring(0, 100) + (text.length > 100 ? '...' : '')
@@ -111,7 +136,7 @@ class DatabaseConnection {
 
       return result.rows;
     } catch (error) {
-      logger.error('Database query failed', {
+      logger.error('❌ ENHANCED SCHEMA: Database query failed', {
         error: error.message,
         query: text.substring(0, 100) + (text.length > 100 ? '...' : ''),
         params: params.length
@@ -128,7 +153,9 @@ class DatabaseConnection {
     if (!this.pool) {
       throw new Error('Database connection not initialized');
     }
-    return await this.pool.connect();
+    const client = await this.pool.connect();
+    await client.query('SET search_path TO identity_service, public');
+    return client;
   }
 
   /**
@@ -139,7 +166,7 @@ class DatabaseConnection {
       await this.pool.end();
       this.pool = null;
       this.isConnected = false;
-      logger.info('Database connection closed');
+      logger.info('🔌 ENHANCED SCHEMA: Database connection closed');
     }
   }
 

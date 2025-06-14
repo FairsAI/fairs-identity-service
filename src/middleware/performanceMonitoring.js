@@ -3,7 +3,7 @@
  * Enterprise-grade request tracking and system monitoring for Phase 4
  */
 
-const databaseFactory = require('../config/database-factory');
+const { dbConnection } = require('../database/db-connection');
 
 class PerformanceMonitor {
   constructor() {
@@ -64,8 +64,8 @@ class PerformanceMonitor {
           'X-Response-Time': `${responseTime}ms`,
           'X-Request-ID': requestId,
           'X-Performance-Level': performanceLevel,
-          'X-Database-Separation': 'active',
-          'X-Phase': 'Phase-4-Production'
+          'X-Enhanced-Schema': 'active',
+          'X-Database': 'fairs_commerce'
         });
         
         // Store request data for analytics
@@ -135,29 +135,22 @@ class PerformanceMonitor {
 
   async getDatabaseMetrics() {
     try {
-      const healthChecks = await databaseFactory.checkAllHealth();
-      const connectionStats = databaseFactory.getConnectionStats();
+      // Use single Enhanced Schema database connection
+      const healthCheck = await dbConnection.query('SELECT NOW() as timestamp, current_database() as database, current_schema() as schema');
       
-      // Calculate database performance
-      const avgResponseTime = Object.values(healthChecks)
-        .filter(db => db.responseTime)
-        .reduce((sum, db) => sum + db.responseTime, 0) / 
-        Object.values(healthChecks).filter(db => db.responseTime).length;
-
-      const totalConnections = Object.values(connectionStats)
-        .reduce((sum, stats) => sum + stats.totalCount, 0);
-
-      const maxConnections = Object.values(connectionStats)
-        .reduce((sum, stats) => sum + stats.maxConnections, 0);
-
       return {
-        health: healthChecks,
-        connections: connectionStats,
-        performance: {
-          avgResponseTime: Math.round(avgResponseTime) + 'ms',
-          connectionUtilization: Math.round((totalConnections / maxConnections) * 100) + '%',
-          totalConnections,
-          maxConnections
+        health: {
+          status: dbConnection.isHealthy() ? 'healthy' : 'unhealthy',
+          database: healthCheck[0]?.database || 'unknown',
+          schema: healthCheck[0]?.schema || 'unknown',
+          timestamp: healthCheck[0]?.timestamp || new Date().toISOString()
+        },
+        connections: {
+          enhancedSchema: {
+            database: 'fairs_commerce',
+            schema: 'identity_service',
+            status: dbConnection.isHealthy() ? 'connected' : 'disconnected'
+          }
         },
         uptime: Date.now() - this.startTime,
         timestamp: new Date().toISOString()
