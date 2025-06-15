@@ -137,7 +137,7 @@ class PerformanceMonitor {
     try {
       // Use single Enhanced Schema database connection
       const healthCheck = await dbConnection.query('SELECT NOW() as timestamp, current_database() as database, current_schema() as schema');
-      
+
       return {
         health: {
           status: dbConnection.isHealthy() ? 'healthy' : 'unhealthy',
