@@ -1,8 +1,26 @@
 /**
- * Identity API Routes
+ * Identity Service API Routes
  * 
- * Provides API endpoints for device fingerprinting, identity management, 
- * and verification services.
+ * MICROSERVICE ARCHITECTURE BOUNDARIES:
+ * 
+ * ✅ IDENTITY SERVICE HANDLES:
+ * - User identity management and authentication
+ * - Device fingerprinting and recognition
+ * - User verification (SMS, email)
+ * - User addresses and preferences
+ * - Payment method METADATA (labels, last 4 digits, expiry dates)
+ * - Cross-merchant identity linking
+ * 
+ * ❌ IDENTITY SERVICE DOES NOT HANDLE:
+ * - Payment processing (use Payment Service)
+ * - Transaction generation (use Payment Service)
+ * - Card data processing (use Payment Service)
+ * - Payment gateway interactions (use Payment Service)
+ * 
+ * For payment processing, make HTTP calls to the Payment Service at:
+ * - POST /api/payments/process
+ * - POST /api/payments/intent
+ * - GET /api/payments/status/:id
  */
 
 const express = require('express');
@@ -1096,186 +1114,8 @@ router.post('/identity/verify', validateRequired(['userId', 'merchantId']), asyn
   }
 });
 
-/**
- * Payment processing endpoint
- * POST /api/legacy-checkout/process-payment
- * 
- * Body:
- * {
- *   amount: number,
- *   currency: string,
- *   userId: string,
- *   deviceId: string,
- *   merchantId: string,
- *   card: object,
- *   metadata: object
- * }
- * 
- * Response:
- * {
- *   success: boolean,
- *   transactionId: string,
- *   amount: number,
- *   currency: string,
- *   timestamp: string
- * }
- */
-router.post('/legacy-checkout/process-payment', async (req, res) => {
-  logger.info({
-    message: 'Processing payment request',
-    amount: req.body.amount,
-    currency: req.body.currency,
-    merchantId: req.body.merchantId
-  });
-  
-  // Add comprehensive debugging for card data extraction
-  
-  try {
-    const { amount, currency, userId, deviceId, merchantId, card, metadata, customer } = req.body;
-    
-    // Create or update user in database if customer information is provided
-    let user = null;
-    if (customer && (customer.email || customer.phone)) {
-      
-      try {
-        const { userRepository } = require('../repositories/user-repository');
-        const { v4: uuidv4 } = require('uuid');
-        
-        
-        // Check if user already exists by email
-        if (customer.email) {
-          user = await userRepository.getUserByEmail(customer.email);
-          if (user) {
-            logger.info({
-              message: 'Found existing user for payment',
-              userId: user.id,
-              email: customer.email
-            });
-          } else {
-          }
-        }
-        
-        // If no existing user found, create a new one
-        if (!user) {
-          const newUserId = `user_${uuidv4().substring(0, 8)}`;
-          
-          const userData = {
-            id: newUserId,
-            email: customer.email || null,
-            phoneNumber: customer.phone || null,
-            name: customer.name || null,
-            temporary: true, // Default to temporary user
-            consented: false // Default to not consented
-          };
-
-          user = await userRepository.createUser(userData);
-          
-          logger.info({
-            message: 'Created new user during payment processing',
-            userId: user.id,
-            email: user.email,
-            phone: user.phoneNumber
-          });
-        }
-      } catch (userError) {
-        logger.error({
-          message: 'Failed to create/find user during payment',
-          error: userError.message,
-          stack: userError.stack
-        });
-        // Continue with payment processing even if user creation fails
-      }
-    } else {
-    }
-    
-    // Generate transaction ID
-    const transactionId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    
-    // Extract card last 4 digits from various possible data structures
-    let cardLast4 = '1111'; // Default fallback
-    let extractionMethod = 'default_fallback';
-    
-    
-    // Try different possible data structures
-    if (req.body.payment_method?.card?.number) {
-      // Format: { payment_method: { card: { number: "..." } } }
-      cardLast4 = req.body.payment_method.card.number.replace(/\s+/g, '').slice(-4);
-      extractionMethod = 'payment_method.card.number';
-    } else if (card?.number) {
-      // Format: { card: { number: "..." } }
-      cardLast4 = card.number.replace(/\s+/g, '').slice(-4);
-      extractionMethod = 'card.number';
-    } else if (req.body.cardNumber) {
-      // Format: { cardNumber: "..." }
-      cardLast4 = req.body.cardNumber.replace(/\s+/g, '').slice(-4);
-      extractionMethod = 'cardNumber';
-    } else if (req.body.customer?.cardNumber) {
-      // Format: { customer: { cardNumber: "..." } }
-      cardLast4 = req.body.customer.cardNumber.replace(/\s+/g, '').slice(-4);
-      extractionMethod = 'customer.cardNumber';
-    }
-    
-    
-    // Simulate payment processing
-    const payment = {
-      transactionId,
-      amount: amount || 100,
-      currency: currency || 'USD',
-      userId: user ? user.id : userId,
-      deviceId,
-      merchantId,
-      cardLast4: cardLast4,
-      status: 'completed',
-      timestamp: new Date().toISOString(),
-      metadata: metadata || {},
-      _debug: {
-        extractionMethod: extractionMethod,
-        originalData: {
-          hasPaymentMethod: !!req.body.payment_method,
-          hasCard: !!card,
-          hasCardNumber: !!req.body.cardNumber,
-          hasCustomerCardNumber: !!req.body.customer?.cardNumber
-        }
-      }
-    };
-    
-    logger.info({
-      message: 'Payment processed successfully',
-      transactionId,
-      amount: payment.amount,
-      merchantId,
-      cardLast4: cardLast4,
-      extractionMethod: extractionMethod,
-      userId: user ? user.id : 'anonymous',
-      customer: {
-        email: customer?.email,
-        phone: customer?.phone
-      }
-    });
-    
-    res.json({
-      success: true,
-      transactionId: payment.transactionId,
-      amount: payment.amount,
-      currency: payment.currency,
-      timestamp: payment.timestamp,
-      cardLast4: cardLast4,
-      userId: user ? user.id : null,
-      debug: payment._debug
-    });
-  } catch (error) {
-    logger.error({
-      message: 'Failed to process payment',
-      error: error.message,
-      stack: error.stack
-    });
-    
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+// REMOVED: Payment processing endpoint moved to payment service
+// This endpoint violated microservice architecture by processing payments in the identity service
 
 /**
  * Enhanced device fingerprint endpoint
@@ -1366,52 +1206,8 @@ router.post('/verification/validate',
   }
 });
 
-/**
- * Enhanced payment processing endpoint
- * POST /api/legacy-checkout/process-payment-enhanced
- */
-router.post('/legacy-checkout/process-payment-enhanced', async (req, res) => {
-  logger.info({
-    message: 'Enhanced payment processing request',
-    body: req.body
-  });
-  
-  try {
-    const { cardNumber, expiry, cvv, amount, currency, merchantId } = req.body;
-    
-    // Basic validation
-    if (!cardNumber || !expiry || !cvv) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required payment fields'
-      });
-    }
-    
-    // For testing, simulate successful payment
-    const transactionId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    
-    res.json({
-      success: true,
-      transactionId: transactionId,
-      amount: amount || 2440, // Default to test amount
-      currency: currency || 'USD',
-      last4: cardNumber.slice(-4),
-      timestamp: new Date().toISOString(),
-      message: 'Payment processed successfully'
-    });
-  } catch (error) {
-    logger.error({
-      message: 'Enhanced payment processing error',
-      error: error.message,
-      stack: error.stack
-    });
-    
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+// REMOVED: Enhanced payment processing endpoint moved to payment service
+// This endpoint violated microservice architecture by processing payments in the identity service
 
 /**
  * Enhanced identity verification endpoint for SDK database integration
@@ -1464,8 +1260,6 @@ router.get('/sdk/health', (req, res) => {
       '/api/device-fingerprint/register',
       '/api/verification', 
       '/api/verification/validate',
-      '/api/legacy-checkout/process-payment',
-      '/api/legacy-checkout/process-payment-enhanced',
       '/api/identity/verify',
       '/api/identity/verify-enhanced'
     ]
