@@ -130,4 +130,4 @@ tmp/
 temp/
 
 # Package-lock files (optional - some teams prefer to commit this)
-# package-lock.json 
+# package-lock.json *.backup
