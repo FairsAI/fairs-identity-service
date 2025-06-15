@@ -81,12 +81,12 @@ class UserPaymentMethodRepository {
         ba.first_name as billing_first_name,
         ba.last_name as billing_last_name,
         ba.company as billing_company,
-        ba.address_line1 as billing_address_line_1,
-        ba.address_line2 as billing_address_line_2,
+        ba.address_line_1 as billing_address_line_1,
+        ba.address_line_2 as billing_address_line_2,
         ba.city as billing_city,
-        ba.state as billing_state,
+        ba.state_province as billing_state,
         ba.postal_code as billing_postal_code,
-        ba.country as billing_country_code,
+        ba.country_code as billing_country_code,
         ba.phone as billing_phone
       FROM identity_service.user_payment_methods pm
       LEFT JOIN identity_service.user_addresses ba ON pm.billing_address_id = ba.id
@@ -153,7 +153,7 @@ class UserPaymentMethodRepository {
    */
   async getPaymentMethodById(paymentMethodId, userId = null) {
     let query = `
-      SELECT pm.*, ua.label as billing_address_label, ua.city as billing_city, ua.state as billing_state
+      SELECT pm.*, ua.label as billing_address_label, ua.city as billing_city, ua.state_province as billing_state
       FROM identity_service.user_payment_methods pm
       LEFT JOIN identity_service.user_addresses ua ON pm.billing_address_id = ua.id
       WHERE pm.id = $1
@@ -354,7 +354,7 @@ class UserPaymentMethodRepository {
    */
   async getDefaultPaymentMethod(userId) {
     const query = `
-      SELECT pm.*, ua.label as billing_address_label, ua.city as billing_city, ua.state as billing_state
+      SELECT pm.*, ua.label as billing_address_label, ua.city as billing_city, ua.state_province as billing_state
       FROM identity_service.user_payment_methods pm
       LEFT JOIN identity_service.user_addresses ua ON pm.billing_address_id = ua.id
       WHERE pm.user_id = $1 AND pm.is_default = true
@@ -375,7 +375,7 @@ class UserPaymentMethodRepository {
    */
   async getPaymentMethodsByStatus(userId, verificationStatus) {
     const query = `
-      SELECT pm.*, ua.label as billing_address_label, ua.city as billing_city, ua.state as billing_state
+      SELECT pm.*, ua.label as billing_address_label, ua.city as billing_city, ua.state_province as billing_state
       FROM identity_service.user_payment_methods pm
       LEFT JOIN identity_service.user_addresses ua ON pm.billing_address_id = ua.id
       WHERE pm.user_id = $1 AND pm.verification_status = $2
