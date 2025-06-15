@@ -77,7 +77,7 @@ class UserPaymentMethodRepository {
       SELECT 
         pm.*,
         ba.id as billing_address_id,
-        ba.nickname as billing_address_label,
+        ba.label as billing_address_label,
         ba.first_name as billing_first_name,
         ba.last_name as billing_last_name,
         ba.company as billing_company,
@@ -153,7 +153,7 @@ class UserPaymentMethodRepository {
    */
   async getPaymentMethodById(paymentMethodId, userId = null) {
     let query = `
-      SELECT pm.*, ua.nickname as billing_address_label, ua.city as billing_city, ua.state as billing_state
+      SELECT pm.*, ua.label as billing_address_label, ua.city as billing_city, ua.state as billing_state
       FROM identity_service.user_payment_methods pm
       LEFT JOIN identity_service.user_addresses ua ON pm.billing_address_id = ua.id
       WHERE pm.id = $1
@@ -354,7 +354,7 @@ class UserPaymentMethodRepository {
    */
   async getDefaultPaymentMethod(userId) {
     const query = `
-      SELECT pm.*, ua.nickname as billing_address_label, ua.city as billing_city, ua.state as billing_state
+      SELECT pm.*, ua.label as billing_address_label, ua.city as billing_city, ua.state as billing_state
       FROM identity_service.user_payment_methods pm
       LEFT JOIN identity_service.user_addresses ua ON pm.billing_address_id = ua.id
       WHERE pm.user_id = $1 AND pm.is_default = true
@@ -375,7 +375,7 @@ class UserPaymentMethodRepository {
    */
   async getPaymentMethodsByStatus(userId, verificationStatus) {
     const query = `
-      SELECT pm.*, ua.nickname as billing_address_label, ua.city as billing_city, ua.state as billing_state
+      SELECT pm.*, ua.label as billing_address_label, ua.city as billing_city, ua.state as billing_state
       FROM identity_service.user_payment_methods pm
       LEFT JOIN identity_service.user_addresses ua ON pm.billing_address_id = ua.id
       WHERE pm.user_id = $1 AND pm.verification_status = $2
