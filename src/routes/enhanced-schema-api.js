@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const userAddressRepository = require('../repositories/user-address-repository');
 const userPaymentMethodRepository = require('../repositories/user-payment-method-repository');
+const { userRepository } = require('../repositories/user-repository');
 const { logger } = require('../utils/logger');
 
 // ============================================================================
@@ -30,7 +31,6 @@ router.post('/addresses', async (req, res) => {
       
       try {
         // Check if user already exists by email
-        const userRepository = require('../repositories/user-repository');
         const existingUser = await userRepository.getUserByEmail(email);
         
         if (existingUser) {
@@ -363,7 +363,6 @@ router.post('/payment-methods', async (req, res) => {
       
       try {
         // Check if user already exists by email
-        const userRepository = require('../repositories/user-repository');
         const existingUser = await userRepository.getUserByEmail(email);
         
         if (existingUser) {
