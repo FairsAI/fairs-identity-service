@@ -65,9 +65,6 @@ const baseConfig = {
 // Required environment variables based on environment
 const requiredVars = env === 'production' 
   ? [
-      'TILLED_API_KEY',
-      'TILLED_MERCHANT_ID',
-      'TILLED_PUBLIC_KEY',
       'DB_HOST',
       'DB_USER', 
       'DB_PASSWORD',
@@ -87,7 +84,7 @@ if (env !== 'test') {
   validateRequiredEnvironmentVariables(requiredVars);
 }
 
-// Tilled API configuration - NO DEFAULTS
+// Tilled API configuration - OPTIONAL (not used by identity service)
 const tilledConfig = {
   apiKey: process.env.TILLED_API_KEY,
   apiUrl: process.env.TILLED_API_URL || (env === 'production' ? 'https://api.tilled.com/v1' : 'https://sandbox-api.tilled.com/v1'),
@@ -231,7 +228,7 @@ if (env !== 'test') {
   console.log(`   JWT Secret: ${config.api.jwtSecret ? '✅ SET' : '❌ MISSING'}`);
   console.log(`   Encryption Key: ${config.api.encryptionKey ? '✅ SET' : '❌ MISSING'}`);
   console.log(`   Database: ${config.database.host ? '✅ CONFIGURED' : '❌ MISSING'}`);
-  console.log(`   Tilled API: ${config.tilled.apiKey ? '✅ SET' : '❌ MISSING'}`);
+  console.log(`   Tilled API: ${config.tilled.apiKey ? '✅ SET' : '⚠️  NOT REQUIRED'}`);
   console.log(`   Twilio: ${config.twilio.enabled ? '✅ ENABLED' : '⚠️  DISABLED'}`);
 }
 
