@@ -21,8 +21,21 @@ class SecurityMonitor {
     this.securityEvents = [];
     this.maxEventHistory = 10000;
     
-    // Cleanup old events every 5 minutes
-    setInterval(() => this.cleanupEvents(), 300000);
+    // FIXED: Store interval reference for proper cleanup
+    this.cleanupInterval = setInterval(() => this.cleanupEvents(), 300000);
+  }
+
+  /**
+   * Shutdown and cleanup security monitor
+   * ADDED: Proper cleanup method to prevent memory leaks
+   */
+  shutdown() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+    this.threats.clear();
+    this.securityEvents.length = 0;
   }
 
   /**

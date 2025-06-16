@@ -677,4 +677,91 @@ router.get('/users/:userId/defaults', async (req, res) => {
   }
 });
 
+// ============================================================================
+// USER MANAGEMENT (Source of Truth)
+// ============================================================================
+
+/**
+ * Create user (Identity Service is Source of Truth)
+ * POST /api/users
+ */
+router.post('/users', async (req, res) => {
+  logger.info({
+    message: 'Enhanced Schema: User creation request (handled internally)',
+    userId: req.body.id,
+    email: req.body.email
+  });
+
+  try {
+    const { id, email, firstName, lastName, phone, temporary, consented } = req.body;
+    
+    if (!id || !email) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'User ID and email are required' 
+      });
+    }
+
+    // Identity service handles user data internally when addresses/payments are created
+    // This endpoint exists for API compatibility but user data is managed automatically
+    logger.info('Enhanced Schema: User data will be managed automatically when addresses/payments are created', { 
+      userId: id, 
+      email 
+    });
+    
+    res.json({ 
+      success: true, 
+      user: {
+        id,
+        email,
+        firstName,
+        lastName,
+        phone,
+        temporary: temporary || false,
+        consented: consented || false
+      },
+      message: 'User data accepted - will be managed automatically by identity service'
+    });
+  } catch (error) {
+    logger.error('User creation request failed:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * Get user by ID
+ * GET /api/users/:userId
+ */
+router.get('/users/:userId', async (req, res) => {
+  logger.info({
+    message: 'Enhanced Schema: Get user request',
+    userId: req.params.userId
+  });
+
+  try {
+    const userId = req.params.userId;
+    
+    // Return a basic user profile based on address/payment data if available
+    // This is a placeholder implementation since users are managed internally
+    res.json({ 
+      success: true, 
+      user: {
+        id: userId,
+        email: `${userId}@temp.fairs.com`,
+        temporary: true,
+        message: 'User data managed internally by identity service'
+      }
+    });
+  } catch (error) {
+    logger.error('Get user request failed:', error);
+    res.status(404).json({ 
+      success: false, 
+      error: 'User not found - user data managed internally' 
+    });
+  }
+});
+
 module.exports = router; 

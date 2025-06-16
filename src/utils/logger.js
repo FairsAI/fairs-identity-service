@@ -6,17 +6,33 @@
 const logger = {
   debug: (message, ...args) => {
     if (process.env.NODE_ENV !== 'production') {
-      console.debug(`[DEBUG] ${message}`, ...args);
+      if (typeof message === 'object') {
+        console.debug('[DEBUG]', JSON.stringify(message, null, 2), ...args);
+      } else {
+        console.debug(`[DEBUG] ${message}`, ...args);
+      }
     }
   },
   info: (message, ...args) => {
-    console.info(`[INFO] ${message}`, ...args);
+    if (typeof message === 'object') {
+      console.info('[INFO]', JSON.stringify(message, null, 2), ...args);
+    } else {
+      console.info(`[INFO] ${message}`, ...args);
+    }
   },
   warn: (message, ...args) => {
-    console.warn(`[WARN] ${message}`, ...args);
+    if (typeof message === 'object') {
+      console.warn('[WARN]', JSON.stringify(message, null, 2), ...args);
+    } else {
+      console.warn(`[WARN] ${message}`, ...args);
+    }
   },
   error: (message, ...args) => {
-    console.error(`[ERROR] ${message}`, ...args);
+    if (typeof message === 'object') {
+      console.error('[ERROR]', JSON.stringify(message, null, 2), ...args);
+    } else {
+      console.error(`[ERROR] ${message}`, ...args);
+    }
   }
 };
 

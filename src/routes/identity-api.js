@@ -42,6 +42,147 @@ router.use(rateLimiter({
   windowMs: 15 * 60 * 1000 // 50 requests per 15 minutes 
 }));
 
+// ============================================================================
+// USER MANAGEMENT (Source of Truth for Checkout Service)
+// ============================================================================
+
+/**
+ * Create user (Identity Service is Source of Truth)
+ * POST /api/users
+ * 
+ * Simple endpoint for checkout service integration
+ */
+router.post('/users', async (req, res) => {
+  logger.info({
+    message: 'Identity Service: User creation request',
+    userId: req.body.id,
+    email: req.body.email
+  });
+
+  try {
+    const { id, email, firstName, lastName, phone, temporary, consented } = req.body;
+    
+    if (!id || !email) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'User ID and email are required' 
+      });
+    }
+
+    // Check if user already exists by email
+    const existingUser = await userRepository.getUserByEmail(email);
+    if (existingUser) {
+      logger.info('Identity Service: User already exists, returning existing user', { 
+        userId: existingUser.id, 
+        email 
+      });
+      
+      return res.json({ 
+        success: true, 
+        user: {
+          id: existingUser.id,
+          email: existingUser.email,
+          firstName: existingUser.first_name,
+          lastName: existingUser.last_name,
+          phone: existingUser.phone,
+          temporary: false,
+          consented: true
+        },
+        message: 'User already exists in identity service'
+      });
+    }
+
+    // Create user in database using UserRepository
+    const userData = {
+      email,
+      firstName,
+      lastName,
+      phone
+    };
+
+    const createdUser = await userRepository.createUser(userData);
+    
+    logger.info('Identity Service: User created successfully in database', { 
+      userId: createdUser.id, 
+      email: createdUser.email 
+    });
+    
+    res.json({ 
+      success: true, 
+      user: {
+        id: createdUser.id,
+        email: createdUser.email,
+        firstName: createdUser.first_name,
+        lastName: createdUser.last_name,
+        phone: createdUser.phone,
+        temporary: temporary || false,
+        consented: consented || false
+      },
+      message: 'User created successfully in identity service'
+    });
+  } catch (error) {
+    logger.error('User creation request failed:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * Get user by ID
+ * GET /api/users/:userId
+ */
+router.get('/users/:userId', async (req, res) => {
+  logger.info({
+    message: 'Identity Service: Get user request',
+    userId: req.params.userId
+  });
+
+  try {
+    const userId = req.params.userId;
+    
+    // Try to get user from database
+    const user = await userRepository.getUserById(userId);
+    
+    if (!user) {
+      logger.info('Identity Service: User not found in database', { userId });
+      return res.status(404).json({ 
+        success: false, 
+        error: 'User not found' 
+      });
+    }
+    
+    logger.info('Identity Service: User found in database', { 
+      userId: user.id, 
+      email: user.email 
+    });
+    
+    res.json({ 
+      success: true, 
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        phone: user.phone,
+        temporary: false,
+        consented: true
+      }
+    });
+  } catch (error) {
+    logger.error('Get user request failed:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Internal server error' 
+    });
+  }
+});
+
+// ============================================================================
+// DEVICE FINGERPRINTING
+// ============================================================================
+
 // Middleware to validate required fields
 const validateRequired = (fields) => {
   return (req, res, next) => {
@@ -907,14 +1048,12 @@ router.post('/identity/lookup', async (req, res) => {
           SELECT 
             u.id,
             u.email,
-            u.phone_number,
-            u.name,
-            u.temporary,
-            u.consented,
-            u.phone_verified,
+            u.phone,
+            u.first_name,
+            u.last_name,
             u.created_at,
             u.updated_at
-          FROM users u
+          FROM identity_service.users u
           WHERE LOWER(u.email) = LOWER($1)
           ORDER BY u.updated_at DESC
           LIMIT 1
@@ -927,16 +1066,13 @@ router.post('/identity/lookup', async (req, res) => {
           user = {
             universalId: row.id, // Use id as universal_id
             email: row.email,
-            phone: row.phone_number, // Correct column name
+            phone: row.phone, // Correct column name
             cardLast4: null, // users table doesn't have card info
-            name: row.name,
+            name: `${row.first_name || ''} ${row.last_name || ''}`.trim() || null,
             lastTransaction: null, // users table doesn't have transaction info
             merchantMappings: null, // users table doesn't have merchant mappings
             created: row.created_at,
-            updated: row.updated_at,
-            temporary: row.temporary,
-            consented: row.consented,
-            phoneVerified: row.phone_verified
+            updated: row.updated_at
           };
         }
       } else if (lookupType === 'phone' && phone) {
