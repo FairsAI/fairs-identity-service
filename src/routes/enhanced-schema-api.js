@@ -16,12 +16,45 @@ router.post('/addresses', async (req, res) => {
   logger.info({
     message: 'Enhanced Schema: Save user address request',
     userId: req.body.userId,
+    email: req.body.email,
     label: req.body.label || req.body.nickname,
     type: req.body.type || req.body.addressType
   });
 
   try {
-    const { userId, type, nickname, ...addressData } = req.body;
+    let { userId, email, firstName, lastName, type, nickname, ...addressData } = req.body;
+    
+    // If no userId provided, create user first
+    if (!userId && email) {
+      logger.info('Enhanced Schema: Creating new user for address', { email, firstName, lastName });
+      
+      try {
+        // Check if user already exists by email
+        const userRepository = require('../repositories/user-repository');
+        const existingUser = await userRepository.getUserByEmail(email);
+        
+        if (existingUser) {
+          userId = existingUser.id;
+          logger.info('Enhanced Schema: Found existing user', { userId, email });
+        } else {
+          // Create new user
+          const newUser = await userRepository.createUser({
+            email,
+            firstName: firstName || 'User',
+            lastName: lastName || '',
+            phone: addressData.phone || null
+          });
+          userId = newUser.id;
+          logger.info('Enhanced Schema: Created new user', { userId, email });
+        }
+      } catch (userError) {
+        logger.error('Enhanced Schema: Failed to create user', userError);
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Failed to create user: ' + userError.message 
+        });
+      }
+    }
     
     // Map API fields to repository expected fields
     const mappedAddressData = {
@@ -33,7 +66,7 @@ router.post('/addresses', async (req, res) => {
     if (!userId) {
       return res.status(400).json({ 
         success: false, 
-        error: 'User ID is required' 
+        error: 'User ID or email is required for address creation' 
       });
     }
 
@@ -49,6 +82,7 @@ router.post('/addresses', async (req, res) => {
     res.json({ 
       success: true, 
       address,
+      userId, // ✅ Return real integer ID for frontend to store
       message: `${mappedAddressData.label || 'Address'} saved successfully`
     });
   } catch (error) {
@@ -315,17 +349,50 @@ router.post('/payment-methods', async (req, res) => {
   logger.info({
     message: 'Enhanced Schema: Save user payment method request',
     userId: req.body.userId,
+    email: req.body.email,
     label: req.body.label || req.body.nickname,
     type: req.body.type || req.body.paymentType
   });
 
   try {
-    const { userId, type, nickname, ...paymentData } = req.body;
+    let { userId, email, firstName, lastName, type, nickname, ...paymentData } = req.body;
+    
+    // If no userId provided, create user first
+    if (!userId && email) {
+      logger.info('Enhanced Schema: Creating new user for payment method', { email, firstName, lastName });
+      
+      try {
+        // Check if user already exists by email
+        const userRepository = require('../repositories/user-repository');
+        const existingUser = await userRepository.getUserByEmail(email);
+        
+        if (existingUser) {
+          userId = existingUser.id;
+          logger.info('Enhanced Schema: Found existing user', { userId, email });
+        } else {
+          // Create new user
+          const newUser = await userRepository.createUser({
+            email,
+            firstName: firstName || 'User',
+            lastName: lastName || '',
+            phone: paymentData.phone || null
+          });
+          userId = newUser.id;
+          logger.info('Enhanced Schema: Created new user', { userId, email });
+        }
+      } catch (userError) {
+        logger.error('Enhanced Schema: Failed to create user', userError);
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Failed to create user: ' + userError.message 
+        });
+      }
+    }
     
     if (!userId) {
       return res.status(400).json({ 
         success: false, 
-        error: 'User ID is required' 
+        error: 'User ID or email is required for payment method creation' 
       });
     }
 
@@ -341,6 +408,7 @@ router.post('/payment-methods', async (req, res) => {
     res.json({ 
       success: true, 
       paymentMethod,
+      userId, // ✅ Return real integer ID for frontend to store
       message: `${paymentData.label || 'Payment method'} saved successfully`
     });
   } catch (error) {
