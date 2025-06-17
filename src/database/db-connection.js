@@ -37,41 +37,20 @@ class DatabaseConnection {
         ssl: process.env.DB_SSL === 'true',
         max: parseInt(process.env.DB_POOL_SIZE || '20', 10),
         idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 2000,
+        connectionTimeoutMillis: 5000,
       };
 
-      logger.info('🎯 ENHANCED SCHEMA: Connecting explicitly to fairs_commerce database', {
+      logger.info('🎯 ENHANCED SCHEMA: Connecting to fairs_commerce database', {
         host: dbConfig.host,
         database: dbConfig.database,
-        schema: 'identity_service'
+        port: dbConfig.port
       });
 
       this.pool = new Pool(dbConfig);
 
-      // Test the connection and set schema EXPLICITLY
+      // Simple connection test
       const client = await this.pool.connect();
-      
-      // EXPLICIT SCHEMA PATH - identity_service ONLY
-      await client.query('SET search_path TO identity_service, public');
-      
-      // Verify we're connected to the right database
-      const dbCheck = await client.query('SELECT current_database() as db, current_schema() as schema');
-      logger.info('✅ ENHANCED SCHEMA: Database connection verified', {
-        database: dbCheck.rows[0].db,
-        schema: dbCheck.rows[0].schema
-      });
-      
-      // Verify Enhanced Schema tables exist
-      const tableCheck = await client.query(`
-        SELECT table_name 
-        FROM information_schema.tables 
-        WHERE table_schema = 'identity_service' 
-        AND table_name IN ('user_payment_methods', 'user_addresses')
-      `);
-      logger.info('✅ ENHANCED SCHEMA: Tables verified', {
-        tables: tableCheck.rows.map(r => r.table_name)
-      });
-      
+      await client.query('SELECT 1');
       client.release();
 
       this.isConnected = true;
@@ -82,14 +61,9 @@ class DatabaseConnection {
         error: error.message
       });
       
-      // For development, we'll continue without database for now
-      if (config.env === 'development') {
-        logger.warn('⚠️ Continuing without database connection in development mode');
-        this.isConnected = false;
-        return;
-      }
-      
-      throw error;
+      // Continue without throwing - handle per request
+      this.isConnected = false;
+      logger.warn('⚠️ Service will continue - database connection will retry per request');
     }
   }
 

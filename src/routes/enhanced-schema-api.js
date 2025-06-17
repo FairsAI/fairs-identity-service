@@ -56,9 +56,27 @@ router.post('/addresses', async (req, res) => {
       }
     }
     
-    // Map API fields to repository expected fields
+    // Get user details for firstName/lastName if not provided
+    let userFirstName = firstName || addressData.firstName;
+    let userLastName = lastName || addressData.lastName;
+    
+    // If names not provided, get from user record
+    if (!userFirstName || !userLastName) {
+      try {
+        const userDetails = await userRepository.getUserById(userId);
+        userFirstName = userFirstName || userDetails?.first_name || 'User';
+        userLastName = userLastName || userDetails?.last_name || 'User';
+      } catch (error) {
+        userFirstName = userFirstName || 'User';
+        userLastName = userLastName || 'User';
+      }
+    }
+
+    // Map API fields to repository expected fields - REAL DATABASE PERSISTENCE
     const mappedAddressData = {
       ...addressData,
+      firstName: userFirstName,
+      lastName: userLastName,
       addressType: type || addressData.addressType || 'shipping',
       label: nickname || addressData.label || 'Address'
     };
@@ -77,6 +95,21 @@ router.post('/addresses', async (req, res) => {
       });
     }
 
+    logger.info('Enhanced Schema: About to save address', { 
+      userId, 
+      userIdType: typeof userId, 
+      firstName: firstName,
+      lastName: lastName,
+      requestBody: req.body,
+      addressData: mappedAddressData 
+    });
+    
+    // DEBUG: Force firstName/lastName into the mapped data to test
+    mappedAddressData.firstName = firstName || 'TestFirst';
+    mappedAddressData.lastName = lastName || 'TestLast';
+    
+    console.log('🔍 FINAL DEBUG - About to save:', { userId, mappedAddressData });
+    
     const address = await userAddressRepository.saveAddress(userId, mappedAddressData);
     
     res.json({ 

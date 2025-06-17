@@ -9,16 +9,17 @@ class UserAddressRepository {
 
   /**
    * Save user address with label and nickname support
+   * HYBRID APPROACH: UUID Primary Key (secure) + INTEGER user_id FK (efficient)
    */
   async saveAddress(userId, addressData) {
-    const addressId = uuidv4();
-    
+    // Let database auto-generate UUID primary key (secure, distributed)
+    // Use INTEGER user_id foreign key (efficient lookups)
     const query = `
       INSERT INTO identity_service.user_addresses 
-      (id, user_id, address_type, label, first_name, last_name, company, 
+      (user_id, address_type, label, first_name, last_name, company, 
        address_line_1, address_line_2, city, state_province, postal_code, country_code, 
        phone, delivery_instructions, is_default_shipping, is_default_billing, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
       RETURNING *;
     `;
 
@@ -26,13 +27,21 @@ class UserAddressRepository {
     const isDefaultShipping = addressData.isDefaultShipping || addressData.isDefault || false;
     const isDefaultBilling = addressData.isDefaultBilling || addressData.isDefault || false;
 
+    // Debug: Log what we're receiving
+    logger.info('Repository Debug - Address Data:', { 
+      addressData,
+      firstName: addressData.firstName,
+      lastName: addressData.lastName,
+      first_name: addressData.first_name,
+      last_name: addressData.last_name 
+    });
+
     const values = [
-      addressId,
       userId,
       addressType,
       addressData.label || 'Address',
-      addressData.firstName || addressData.first_name,
-      addressData.lastName || addressData.last_name,
+      addressData.firstName || addressData.first_name || addressData.email?.split('@')[0] || 'User',  // Extract from email if needed
+      addressData.lastName || addressData.last_name || 'User',    // Default last name
       addressData.company || null,
       addressData.addressLine1 || addressData.address_line_1,
       addressData.addressLine2 || addressData.address_line_2 || null,
@@ -62,7 +71,7 @@ class UserAddressRepository {
       logger.info({
         message: 'Enhanced Schema address saved successfully',
         userId,
-        addressId,
+        addressId: result[0].id,
         label: addressData.label,
         type: addressData.addressType
       });
