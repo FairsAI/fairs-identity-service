@@ -101,15 +101,15 @@ async function verifyDatabaseConnection() {
     
     // Optional: Try to list Enhanced Schema tables (non-blocking)
     try {
-      const tableCheck = await dbConnection.query(`
-        SELECT table_name 
-        FROM information_schema.tables 
-        WHERE table_schema = 'identity_service' 
-        AND table_name IN ('user_payment_methods', 'user_addresses')
-        ORDER BY table_name
-      `);
-      
-      console.log('🎯 Enhanced Schema tables found:', tableCheck.map(r => r.table_name));
+    const tableCheck = await dbConnection.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'identity_service' 
+      AND table_name IN ('user_payment_methods', 'user_addresses')
+      ORDER BY table_name
+    `);
+    
+    console.log('🎯 Enhanced Schema tables found:', tableCheck.map(r => r.table_name));
     } catch (tableError) {
       console.log('⚠️ Could not check Enhanced Schema tables:', tableError.message);
     }
