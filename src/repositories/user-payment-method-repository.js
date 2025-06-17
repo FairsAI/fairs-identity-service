@@ -11,7 +11,7 @@ class UserPaymentMethodRepository {
    * Save user payment method with billing address validation
    */
   async savePaymentMethod(userId, paymentData) {
-    const paymentMethodId = uuidv4();
+    // Use database-generated serial ID instead of UUID
     
     // Validate billing address if provided
     if (paymentData.billingAddressId || paymentData.billing_address_id) {
@@ -24,15 +24,14 @@ class UserPaymentMethodRepository {
     
     const query = `
       INSERT INTO identity_service.user_payment_methods 
-      (id, user_id, payment_type, provider, label, last_four_digits, 
+      (user_id, payment_type, provider, label, last_four_digits, 
        expiry_month, expiry_year, payment_token, billing_address_id, is_default, 
        created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
       RETURNING *;
     `;
 
     const values = [
-      paymentMethodId,
       userId,
       paymentData.paymentType || 'credit_card',
       paymentData.provider || null,
@@ -56,7 +55,7 @@ class UserPaymentMethodRepository {
       logger.info({
         message: 'Enhanced Schema payment method saved successfully',
         userId,
-        paymentMethodId,
+        paymentMethodId: result[0].id,
         label: paymentData.label,
         type: paymentData.paymentType,
         billingAddressId: paymentData.billingAddressId || paymentData.billing_address_id
