@@ -38,6 +38,9 @@ class DatabaseConnection {
         max: parseInt(process.env.DB_POOL_SIZE || '20', 10),
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 5000,
+        statement_timeout: 10000,
+        query_timeout: 10000,
+        application_name: 'fairs_identity_service'
       };
 
       logger.info('🎯 ENHANCED SCHEMA: Connecting to fairs_commerce database', {
@@ -50,11 +53,14 @@ class DatabaseConnection {
 
       // Simple connection test
       const client = await this.pool.connect();
-      await client.query('SELECT 1');
+      const testResult = await client.query('SELECT 1 as connection_test');
       client.release();
 
       this.isConnected = true;
-      logger.info('🚀 ENHANCED SCHEMA: Database connection established successfully');
+      logger.info('🚀 ENHANCED SCHEMA: Database connection established successfully', {
+        testResult: testResult.rows[0],
+        connected: this.isConnected
+      });
 
     } catch (error) {
       logger.error('❌ ENHANCED SCHEMA: Failed to initialize database connection', {
@@ -80,9 +86,21 @@ class DatabaseConnection {
       return [{ id: 1, created_at: new Date(), fingerprint_hash: 'mock-hash' }];
     }
 
-    // For development without database, return mock data
+    // For development without database, return mock data with proper user fields
     if (config.env === 'development' && !this.isConnected) {
       logger.debug('Mock database query executed (no connection)', { query: text.substring(0, 50) + '...' });
+      // Return mock user data that matches the expected schema
+      if (text.includes('identity_service.users')) {
+        return [{
+          id: 1,
+          email: 'bill@bill.com',
+          first_name: 'Bill',
+          last_name: 'User',
+          phone: '8888888888',
+          created_at: new Date(),
+          updated_at: new Date()
+        }];
+      }
       return [{ id: 1, created_at: new Date(), fingerprint_hash: 'mock-hash-dev' }];
     }
 
@@ -93,9 +111,8 @@ class DatabaseConnection {
     try {
       const start = Date.now();
       
-      // Get client and ensure correct schema
+      // Get client - no schema path needed since we use explicit schema references
       const client = await this.pool.connect();
-      await client.query('SET search_path TO identity_service, public');
       
       const result = await client.query(text, params);
       client.release();
@@ -105,7 +122,9 @@ class DatabaseConnection {
       logger.debug('🎯 ENHANCED SCHEMA: Database query executed', {
         duration: `${duration}ms`,
         rows: result.rowCount,
-        query: text.substring(0, 100) + (text.length > 100 ? '...' : '')
+        query: text.substring(0, 100) + (text.length > 100 ? '...' : ''),
+        params: params,
+        fullQuery: text
       });
 
       return result.rows;
@@ -128,7 +147,6 @@ class DatabaseConnection {
       throw new Error('Database connection not initialized');
     }
     const client = await this.pool.connect();
-    await client.query('SET search_path TO identity_service, public');
     return client;
   }
 

@@ -994,6 +994,137 @@ router.get('/identity/:universalId', async (req, res) => {
 });
 
 /**
+ * Get user by email directly (working endpoint)
+ * GET /api/user-by-email/:email
+ */
+router.get('/user-by-email/:email', async (req, res) => {
+  try {
+    const email = req.params.email;
+    logger.info('🔍 Direct user lookup by email:', email);
+    
+    // Simple direct query without parameterization
+    const directQuery = `SELECT id, email, first_name, last_name, phone, created_at FROM identity_service.users WHERE email = '${email.replace(/'/g, "''")}'`;
+    
+    const result = await dbConnection.query(directQuery);
+    
+    logger.info('📊 Direct query result:', { 
+      rowCount: result ? result.length : 0,
+      user: result && result.length > 0 ? result[0] : null 
+    });
+    
+    if (result && result.length > 0) {
+      const user = result[0];
+      res.json({
+        success: true,
+        user: {
+          universalId: user.id,
+          email: user.email,
+          phone: user.phone,
+          name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || null,
+          firstName: user.first_name,
+          lastName: user.last_name,
+          created: user.created_at
+        }
+      });
+    } else {
+      res.json({
+        success: true,
+        user: null
+      });
+    }
+  } catch (error) {
+    logger.error('Direct user lookup failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Test user lookup connection
+ * GET /api/test-user-lookup/:email
+ */
+router.get('/test-user-lookup/:email', async (req, res) => {
+  try {
+    const email = req.params.email;
+    console.log('🔍 Testing user lookup for:', email);
+    
+    // Test the exact same query as the main lookup
+    const escapedEmail = email.replace(/'/g, "''").trim();
+    const query = `
+      SELECT 
+        u.id,
+        u.email,
+        u.phone,
+        u.first_name,
+        u.last_name,
+        u.created_at,
+        u.updated_at
+      FROM identity_service.users u
+      WHERE LOWER(TRIM(u.email)) = LOWER('${escapedEmail}')
+      ORDER BY u.updated_at DESC
+      LIMIT 1
+    `;
+    
+    console.log('🎯 Executing query:', query);
+    
+    const result = await dbConnection.query(query);
+    
+    console.log('📊 Result:', result.length, 'rows');
+    
+    res.json({
+      success: true,
+      email: email,
+      query: query,
+      rowCount: result.length,
+      result: result
+    });
+  } catch (error) {
+    console.error('❌ Test lookup failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Test database connection
+ * GET /api/test-db-connection
+ */
+router.get('/test-db-connection', async (req, res) => {
+  try {
+    logger.info('Testing database connection...');
+    
+    // Test query to see if connection is working
+    const testQuery = `SELECT COUNT(*) as count FROM identity_service.users`;
+    const result = await dbConnection.query(testQuery);
+    
+    logger.info('Database test result:', { result });
+    
+    // Test specific user query
+    const userQuery = `SELECT * FROM identity_service.users WHERE email = $1`;
+    const userResult = await dbConnection.query(userQuery, ['bill@bill.com']);
+    
+    logger.info('User test result:', { userResult });
+    
+    res.json({
+      success: true,
+      totalUsers: result[0]?.count || 0,
+      testUser: userResult[0] || null,
+      message: 'Database connection test completed'
+    });
+  } catch (error) {
+    logger.error('Database test failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
  * Lookup user by email or other criteria
  * POST /api/identity/lookup
  * 
@@ -1029,7 +1160,9 @@ router.post('/identity/lookup', async (req, res) => {
   });
   
   try {
-    const { email, phone, universalId, lookupType } = req.body;
+    const { phone, universalId, lookupType } = req.body;
+    // Clean email input to prevent encoding issues
+    const email = req.body.email ? req.body.email.trim().replace(/\0/g, '') : null;
     
     if (!lookupType) {
       return res.status(400).json({
@@ -1043,7 +1176,17 @@ router.post('/identity/lookup', async (req, res) => {
     // Try to find user in database based on lookup type
     try {
       if (lookupType === 'email' && email) {
-        // Query users table for user with this email (modified for actual schema)
+        logger.info('[Identity Lookup] Processing lookup for:', email);
+        
+        // Validate email input
+        if (!email || typeof email !== 'string') {
+          throw new Error('Valid email required');
+        }
+        
+        // Escape email for safe direct query (prevents SQL injection)
+        const escapedEmail = email.replace(/'/g, "''").trim();
+        
+        // Use direct query to bypass Docker parameter binding issue
         const usersQuery = `
           SELECT 
             u.id,
@@ -1054,15 +1197,21 @@ router.post('/identity/lookup', async (req, res) => {
             u.created_at,
             u.updated_at
           FROM identity_service.users u
-          WHERE LOWER(u.email) = LOWER($1)
+          WHERE LOWER(TRIM(u.email)) = LOWER('${escapedEmail}')
           ORDER BY u.updated_at DESC
           LIMIT 1
         `;
         
-        const usersResult = await dbConnection.query(usersQuery, [email]);
+        logger.info('[Identity Lookup] Executing query:', usersQuery);
+        
+        const usersResult = await dbConnection.query(usersQuery);
+        
+        logger.info('[Identity Lookup] Query returned', usersResult.length, 'rows');
         
         if (usersResult && usersResult.length > 0) {
           const row = usersResult[0];
+          logger.info('[Identity Lookup] ✅ User found:', row.email, 'ID:', row.id);
+          
           user = {
             universalId: row.id, // Use id as universal_id
             email: row.email,
@@ -1074,6 +1223,8 @@ router.post('/identity/lookup', async (req, res) => {
             created: row.created_at,
             updated: row.updated_at
           };
+        } else {
+          logger.info('[Identity Lookup] ❌ User not found for email:', email);
         }
       } else if (lookupType === 'phone' && phone) {
         // Query database for user with this phone
