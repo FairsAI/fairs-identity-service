@@ -56,11 +56,11 @@ router.post('/addresses', async (req, res) => {
       }
     }
     
-    // Get user details for firstName/lastName if not provided
-    let userFirstName = firstName || addressData.firstName;
-    let userLastName = lastName || addressData.lastName;
+    // Get firstName/lastName from request body (prioritize form input over user account)
+    let userFirstName = req.body.firstName || firstName || addressData.firstName;
+    let userLastName = req.body.lastName || lastName || addressData.lastName;
     
-    // If names not provided, get from user record
+    // If names still not provided, get from user record as fallback
     if (!userFirstName || !userLastName) {
       try {
         const userDetails = await userRepository.getUserById(userId);
@@ -98,15 +98,13 @@ router.post('/addresses', async (req, res) => {
     logger.info('Enhanced Schema: About to save address', { 
       userId, 
       userIdType: typeof userId, 
-      firstName: firstName,
-      lastName: lastName,
+      formFirstName: req.body.firstName,
+      formLastName: req.body.lastName,
+      finalFirstName: userFirstName,
+      finalLastName: userLastName,
       requestBody: req.body,
       addressData: mappedAddressData 
     });
-    
-    // DEBUG: Force firstName/lastName into the mapped data to test
-    mappedAddressData.firstName = firstName || 'TestFirst';
-    mappedAddressData.lastName = lastName || 'TestLast';
     
     console.log('🔍 FINAL DEBUG - About to save:', { userId, mappedAddressData });
     
@@ -222,7 +220,8 @@ router.put('/addresses/:addressId', async (req, res) => {
   logger.info({
     message: 'Enhanced Schema: Update address request',
     addressId: req.params.addressId,
-    userId: req.body.userId
+    userId: req.body.userId,
+    requestBody: req.body
   });
 
   try {
@@ -235,7 +234,42 @@ router.put('/addresses/:addressId', async (req, res) => {
       });
     }
 
-    const address = await userAddressRepository.updateAddress(req.params.addressId, userId, updateData);
+    // Map camelCase frontend fields to snake_case database fields
+    const mappedUpdateData = {
+      ...updateData,
+      // Map camelCase to snake_case
+      first_name: updateData.firstName || updateData.first_name,
+      last_name: updateData.lastName || updateData.last_name,
+      address_line_1: updateData.addressLine1 || updateData.address_line_1,
+      address_line_2: updateData.addressLine2 || updateData.address_line_2,
+      state_province: updateData.stateProvince || updateData.state_province || updateData.state,
+      postal_code: updateData.postalCode || updateData.postal_code,
+      country_code: updateData.countryCode || updateData.country_code || updateData.country,
+      delivery_instructions: updateData.deliveryInstructions || updateData.delivery_instructions,
+      address_type: updateData.addressType || updateData.address_type,
+      is_default_shipping: updateData.isDefaultShipping || updateData.is_default_shipping,
+      is_default_billing: updateData.isDefaultBilling || updateData.is_default_billing
+    };
+
+    // Remove undefined camelCase fields to avoid conflicts
+    delete mappedUpdateData.firstName;
+    delete mappedUpdateData.lastName;
+    delete mappedUpdateData.addressLine1;
+    delete mappedUpdateData.addressLine2;
+    delete mappedUpdateData.stateProvince;
+    delete mappedUpdateData.postalCode;
+    delete mappedUpdateData.countryCode;
+    delete mappedUpdateData.deliveryInstructions;
+    delete mappedUpdateData.addressType;
+    delete mappedUpdateData.isDefaultShipping;
+    delete mappedUpdateData.isDefaultBilling;
+
+    logger.info('Enhanced Schema: Mapped update data:', { 
+      originalData: updateData,
+      mappedData: mappedUpdateData 
+    });
+
+    const address = await userAddressRepository.updateAddress(req.params.addressId, userId, mappedUpdateData);
     
     res.json({ 
       success: true, 
