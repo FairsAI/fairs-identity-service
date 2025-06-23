@@ -3,6 +3,7 @@ const router = express.Router();
 const userAddressRepository = require('../repositories/user-address-repository');
 const userPaymentMethodRepository = require('../repositories/user-payment-method-repository');
 const { userRepository } = require('../repositories/user-repository');
+const { validatePaymentMethod } = require('../middleware/payment-method-validation');
 const { logger } = require('../utils/logger');
 
 // ============================================================================
@@ -412,7 +413,7 @@ router.post('/addresses/:addressId/used', async (req, res) => {
  * Save user payment method with label and nickname
  * POST /api/payment-methods
  */
-router.post('/payment-methods', async (req, res) => {
+router.post('/payment-methods', validatePaymentMethod, async (req, res) => {
   logger.info({
     message: 'Enhanced Schema: Save user payment method request',
     userId: req.body.userId,
@@ -463,19 +464,36 @@ router.post('/payment-methods', async (req, res) => {
     }
 
     // Map API fields to repository expected fields
+    // Note: paymentData has already been validated and normalized by validatePaymentMethod middleware
     const mappedPaymentData = {
       ...paymentData,
-      paymentType: type || paymentData.paymentType || 'card',
-      label: nickname || paymentData.label || 'Payment Method'
+      paymentType: type || paymentData.paymentType || 'credit_card',
+      label: nickname || paymentData.label || 'Personal Card'
     };
 
     const paymentMethod = await userPaymentMethodRepository.savePaymentMethod(userId, mappedPaymentData);
+    
+    // Log successful creation with validation details
+    logger.info('Enhanced Schema: Payment method created successfully', {
+      userId,
+      paymentMethodId: paymentMethod.id,
+      type: mappedPaymentData.paymentType,
+      label: mappedPaymentData.label,
+      hasValidExpiry: !!(paymentMethod.expiry_month && paymentMethod.expiry_year),
+      expiryFormatted: paymentMethod.expiry_month && paymentMethod.expiry_year ? 
+        `${String(paymentMethod.expiry_month).padStart(2, '0')}/${paymentMethod.expiry_year}` : null
+    });
     
     res.json({ 
       success: true, 
       paymentMethod,
       userId, // ✅ Return real integer ID for frontend to store
-      message: `${paymentData.label || 'Payment method'} saved successfully`
+      message: `${mappedPaymentData.label || 'Payment method'} saved successfully`,
+      validation: {
+        expiry: paymentMethod.expiry_month && paymentMethod.expiry_year ? 
+          `${String(paymentMethod.expiry_month).padStart(2, '0')}/${paymentMethod.expiry_year}` : null,
+        validated: true
+      }
     });
   } catch (error) {
     logger.error('Failed to save Enhanced Schema payment method:', error);
@@ -517,7 +535,7 @@ router.get('/payment-methods/:userId', async (req, res) => {
  * Update payment method
  * PUT /api/payment-methods/:paymentMethodId
  */
-router.put('/payment-methods/:paymentMethodId', async (req, res) => {
+router.put('/payment-methods/:paymentMethodId', validatePaymentMethod, async (req, res) => {
   logger.info({
     message: 'Enhanced Schema: Update payment method request',
     paymentMethodId: req.params.paymentMethodId,
@@ -810,7 +828,5 @@ router.get('/users/:userId/defaults', async (req, res) => {
     });
   }
 });
-
-
 
 module.exports = router; 
