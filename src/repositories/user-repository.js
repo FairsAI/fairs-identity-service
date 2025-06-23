@@ -20,7 +20,7 @@ class UserRepository {
       
       const query = `
         SELECT id, email, first_name, last_name, phone, created_at, updated_at, is_active
-        FROM users 
+        FROM identity_service.users 
         WHERE id = $1 AND is_active = true
       `;
       
@@ -50,7 +50,7 @@ class UserRepository {
       
       const query = `
         SELECT id, email, first_name, last_name, phone, created_at, updated_at, is_active
-        FROM users 
+        FROM identity_service.users 
         WHERE email = $1 AND is_active = true
       `;
       
@@ -98,7 +98,7 @@ class UserRepository {
       }
       
       const query = `
-        INSERT INTO users (email, first_name, last_name, phone, password_hash, created_at, updated_at, is_active)
+        INSERT INTO identity_service.users (email, first_name, last_name, phone, password_hash, created_at, updated_at, is_active)
         VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), true)
         RETURNING id, email, first_name, last_name, phone, created_at, updated_at, is_active
       `;
@@ -159,7 +159,7 @@ class UserRepository {
       values.push(userId);
       
       const query = `
-        UPDATE users 
+        UPDATE identity_service.users 
         SET ${updates.join(', ')}
         WHERE id = $${paramIndex} AND is_active = true
         RETURNING id, email, first_name, last_name, phone, created_at, updated_at, is_active
@@ -189,7 +189,7 @@ class UserRepository {
       logger.debug('Deactivating user', { userId });
       
       const query = `
-        UPDATE users 
+        UPDATE identity_service.users 
         SET is_active = false, updated_at = NOW()
         WHERE id = $1 AND is_active = true
       `;
@@ -220,7 +220,7 @@ class UserRepository {
       
       const query = `
         SELECT id, email, first_name, last_name, phone, password_hash, created_at, updated_at, is_active
-        FROM users 
+        FROM identity_service.users 
         WHERE email = $1 AND is_active = true
       `;
       
