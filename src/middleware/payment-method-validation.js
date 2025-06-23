@@ -136,31 +136,101 @@ const paymentMethodSchema = Joi.object({
 function normalizePaymentMethodData(data) {
   const normalized = { ...data };
   
-  // Handle different expiry format inputs
-  if (data.expiry || data.expiryDate) {
-    const expiryString = data.expiry || data.expiryDate;
-    const match = expiryString.match(/^(0?[1-9]|1[0-2])\/?(20)?([2-9]\d)$/);
+  // CRITICAL: Clean card number - remove spaces, dashes, and any non-digits
+  if (data.cardNumber) {
+    normalized.cardNumber = data.cardNumber.replace(/[\s\-]/g, '');
+  }
+  
+  // Handle nested card object (common in frontend submissions)
+  if (data.card && data.card.number) {
+    normalized.cardNumber = data.card.number.replace(/[\s\-]/g, '');
+    normalized.cvv = data.card.cvc || data.card.cvv;
     
-    if (match) {
-      normalized.expiryMonth = parseInt(match[1]);
+    // Handle card expiry from nested object
+    if (data.card.exp_month && data.card.exp_year) {
+      normalized.expiryMonth = parseInt(data.card.exp_month);
+      normalized.expiryYear = parseInt(data.card.exp_year);
       
-      // Handle 2-digit vs 4-digit years
-      const yearPart = match[3];
-      normalized.expiryYear = match[2] ? parseInt(`20${yearPart}`) : parseInt(`20${yearPart}`);
-      
-      // Ensure year is 4 digits
+      // Ensure 4-digit year for 2-digit inputs
       if (normalized.expiryYear < 100) {
         normalized.expiryYear += 2000;
       }
     }
   }
   
+  // Handle different expiry format inputs
+  if (data.expiry || data.expiryDate) {
+    const expiryString = data.expiry || data.expiryDate;
+    
+    // Enhanced regex to handle MM/YY, MM/YYYY, and other variations
+    const match = expiryString.match(/^(0?[1-9]|1[0-2])\/?(20)?(\d{2})$/);
+    
+    if (match) {
+      normalized.expiryMonth = parseInt(match[1]);
+      
+      // Handle 2-digit vs 4-digit years intelligently
+      const yearPart = match[3];
+      
+      if (match[2]) {
+        // Already has "20" prefix (e.g., "12/2025")
+        normalized.expiryYear = parseInt(`20${yearPart}`);
+      } else {
+        // 2-digit year (e.g., "12/25" or "12/30")
+        const twoDigitYear = parseInt(yearPart);
+        
+        // Smart century detection:
+        // 25-99 = 2025-2099 (valid future cards)
+        // 00-24 = 2000-2024 (likely past, but handle gracefully)
+        if (twoDigitYear >= 25) {
+          normalized.expiryYear = 2000 + twoDigitYear;
+        } else {
+          // For years 00-24, assume they mean 2030+ (e.g., "30" = 2030)
+          normalized.expiryYear = 2000 + twoDigitYear;
+          
+          // But if it's clearly in the past (00-24), add 100 years
+          const currentYear = new Date().getFullYear();
+          if (normalized.expiryYear < currentYear) {
+            normalized.expiryYear += 100; // 2024 -> 2124 (future century)
+          }
+        }
+      }
+    }
+  }
+  
+  // Direct expiry month/year handling with improved normalization
+  if (data.expiryMonth) {
+    normalized.expiryMonth = parseInt(data.expiryMonth);
+  }
+  
+  if (data.expiryYear) {
+    normalized.expiryYear = parseInt(data.expiryYear);
+    
+    // Ensure 4-digit year
+    if (normalized.expiryYear < 100) {
+      // Handle 2-digit years intelligently
+      if (normalized.expiryYear >= 25) {
+        normalized.expiryYear += 2000; // 25 -> 2025
+      } else {
+        normalized.expiryYear += 2030; // 30 -> 2030, but 24 -> 2054
+      }
+    }
+  }
+  
+  // Clean and normalize card-related fields
+  if (data.lastFour && typeof data.lastFour === 'string') {
+    normalized.lastFour = data.lastFour.replace(/\D/g, '').slice(-4);
+  }
+  
+  if (data.cvv && typeof data.cvv === 'string') {
+    normalized.cvv = data.cvv.replace(/\D/g, '');
+  }
+  
   // Normalize field name variations
   if (data.expiry_month && !data.expiryMonth) {
-    normalized.expiryMonth = data.expiry_month;
+    normalized.expiryMonth = parseInt(data.expiry_month);
   }
   if (data.expiry_year && !data.expiryYear) {
-    normalized.expiryYear = data.expiry_year;
+    normalized.expiryYear = parseInt(data.expiry_year);
   }
   if (data.last_four_digits && !data.lastFourDigits) {
     normalized.lastFourDigits = data.last_four_digits;
@@ -180,6 +250,11 @@ function normalizePaymentMethodData(data) {
     normalized.paymentType = data.type;
   } else if (data.paymentType && !data.type) {
     normalized.type = data.paymentType;
+  }
+  
+  // Generate lastFour from cardNumber if not provided
+  if (normalized.cardNumber && !normalized.lastFour) {
+    normalized.lastFour = normalized.cardNumber.slice(-4);
   }
   
   return normalized;
