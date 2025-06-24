@@ -180,6 +180,186 @@ router.get('/users/:userId', async (req, res) => {
 });
 
 // ============================================================================
+// PROGRESSIVE SDK ENDPOINTS - PHASE 1
+// ============================================================================
+
+/**
+ * Cross-Merchant Lookup for Progressive SDK
+ * POST /api/identity/cross-merchant-lookup
+ * 
+ * Fast lookup for instant recognition (<100ms target)
+ */
+router.post('/identity/cross-merchant-lookup', async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    const { universalId, merchantId, timestamp } = req.body;
+    
+    if (!universalId || !merchantId) {
+      return res.status(400).json({
+        success: false,
+        error: 'universalId and merchantId are required'
+      });
+    }
+    
+    logger.info('Progressive SDK: Cross-merchant lookup request', {
+      universalId: universalId.substring(0, 8) + '...',
+      merchantId,
+      timestamp
+    });
+    
+    // Fast lookup in cross-merchant identity table
+    const crossMerchantData = await crossMerchantIdentityRepository.getUserByUniversalId(universalId);
+    
+    if (crossMerchantData && crossMerchantData.user_id) {
+      // Get merchant-specific data if available
+      const merchantData = await crossMerchantIdentityRepository.getMerchantData(universalId, merchantId);
+      
+      const responseTime = Date.now() - startTime;
+      
+      logger.info('Progressive SDK: Cross-merchant lookup successful', {
+        universalId: universalId.substring(0, 8) + '...',
+        userId: crossMerchantData.user_id,
+        responseTime
+      });
+      
+      return res.json({
+        success: true,
+        userId: crossMerchantData.user_id,
+        universalId,
+        confidence: 0.9,
+        lastSeen: crossMerchantData.last_seen,
+        merchantHistory: merchantData ? [merchantData] : [],
+        responseTime
+      });
+    }
+    
+    const responseTime = Date.now() - startTime;
+    logger.info('Progressive SDK: Cross-merchant lookup - no user found', {
+      universalId: universalId.substring(0, 8) + '...',
+      responseTime
+    });
+    
+    res.json({
+      success: false,
+      universalId,
+      confidence: 0,
+      responseTime
+    });
+    
+  } catch (error) {
+    const responseTime = Date.now() - startTime;
+    logger.error('Progressive SDK: Cross-merchant lookup failed', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      responseTime
+    });
+  }
+});
+
+/**
+ * Capture User Identity for Progressive SDK
+ * POST /api/identity/capture
+ * 
+ * Creates or updates user identity with universal ID linking
+ */
+router.post('/identity/capture', async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    const { merchantId, userData, deviceInfo, timestamp } = req.body;
+    
+    if (!merchantId || !userData) {
+      return res.status(400).json({
+        success: false,
+        error: 'merchantId and userData are required'
+      });
+    }
+    
+    logger.info('Progressive SDK: Identity capture request', {
+      merchantId,
+      email: userData.email,
+      timestamp
+    });
+    
+    let userId, universalId;
+    
+    // Check if user exists by email
+    if (userData.email) {
+      const existingUser = await userRepository.getUserByEmail(userData.email);
+      
+      if (existingUser) {
+        userId = existingUser.id;
+        
+        // Get or create universal ID for existing user
+        const crossMerchantData = await crossMerchantIdentityRepository.getUserByUserId(userId);
+        if (crossMerchantData) {
+          universalId = crossMerchantData.universal_id;
+        } else {
+          // Create new universal ID for existing user
+          universalId = await crossMerchantIdentityRepository.createUniversalId(userId);
+        }
+        
+        logger.info('Progressive SDK: Existing user found', { userId, universalId: universalId.substring(0, 8) + '...' });
+      } else {
+        // Create new user
+        const newUser = await userRepository.createUser({
+          email: userData.email,
+          firstName: userData.firstName || userData.name?.split(' ')[0],
+          lastName: userData.lastName || userData.name?.split(' ').slice(1).join(' '),
+          phone: userData.phone
+        });
+        
+        userId = newUser.id;
+        
+        // Create universal ID for new user
+        universalId = await crossMerchantIdentityRepository.createUniversalId(userId);
+        
+        logger.info('Progressive SDK: New user created', { userId, universalId: universalId.substring(0, 8) + '...' });
+      }
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: 'User email is required for identity capture'
+      });
+    }
+    
+    // Associate user with merchant
+    await crossMerchantIdentityRepository.associateMerchant(universalId, merchantId, {
+      lastSeen: new Date().toISOString(),
+      deviceInfo: deviceInfo || {}
+    });
+    
+    const responseTime = Date.now() - startTime;
+    
+    logger.info('Progressive SDK: Identity capture successful', {
+      userId,
+      universalId: universalId.substring(0, 8) + '...',
+      merchantId,
+      responseTime
+    });
+    
+    res.json({
+      success: true,
+      userId,
+      universalId,
+      merchantId,
+      responseTime
+    });
+    
+  } catch (error) {
+    const responseTime = Date.now() - startTime;
+    logger.error('Progressive SDK: Identity capture failed', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      responseTime
+    });
+  }
+});
+
+// ============================================================================
 // DEVICE FINGERPRINTING
 // ============================================================================
 
