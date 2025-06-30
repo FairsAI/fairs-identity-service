@@ -119,7 +119,7 @@ if (env === 'test') {
       console.log('TEST MODE: Using mock database credentials');
       databaseConfig.host = 'mock-db-host';
       databaseConfig.user = 'mock-db-user';
-      databaseConfig.password = this.validateDatabasePassword(process.env.TEST_DB_PASSWORD);
+      databaseConfig.password = process.env.TEST_DB_PASSWORD || 'mock-test-password';
       databaseConfig.name = 'mock_payments_integration_test';
       databaseConfig.useMocks = true;
     }
@@ -195,7 +195,7 @@ const envConfig = {
     api: {
       ...apiConfig,
       validApiKeys: ['test-api-key-for-integration-tests-secure-32-character-minimum'], // Only for testing
-      jwtSecret: this.validateJwtSecret(process.env.JWT_SECRET),
+      jwtSecret: process.env.JWT_SECRET || 'test-jwt-secret-32-characters-minimum-secure-fallback',
       encryptionKey: process.env.API_ENCRYPTION_KEY || 'test-encryption-key-32-chars-minimum-secure-fallback'
     }
   },

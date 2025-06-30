@@ -16,6 +16,9 @@ const config = require('./src/config');
 // Import routes
 const identityRoutes = require('./src/routes/identity-api');
 const enhancedSchemaRoutes = require('./src/routes/enhanced-schema-api');
+// const privacyRoutes = require('./src/routes/privacy');
+const userRightsRoutes = require('./src/routes/user-rights-api');
+const dataTransparencyRoutes = require('./src/routes/data-transparency-api');
 
 // Create Express application
 const app = express();
@@ -60,6 +63,15 @@ app.use('/api', identityRoutes);
 
 // Enhanced Schema routes for multiple addresses and payment methods
 app.use('/api', enhancedSchemaRoutes);
+
+// Privacy routes for CCPA/PIPEDA compliance
+// app.use("/api/privacy", privacyRoutes););
+
+// User Rights API for data subject rights
+app.use('/api/user-rights', userRightsRoutes);
+
+// Data Transparency API for processing transparency
+app.use('/api/data-transparency', dataTransparencyRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {
