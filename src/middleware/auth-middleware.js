@@ -108,8 +108,10 @@ function validateMerchantAccess(options = {}) {
       if (config.api?.merchantApiKeys && Object.keys(config.api.merchantApiKeys).length > 0) {
         // Check if this API key is authorized for this merchant
         const authorizedMerchants = config.api.merchantApiKeys[apiKey] || [];
-        const hasAccess = authorizedMerchants.includes(merchantId) || 
-                          authorizedMerchants.includes('*'); // Wildcard for all merchants
+        const hasAccess = authorizedMerchants.includes(merchantId);
+        
+        // SECURITY: Wildcard permissions removed - explicit merchant authorization required
+        // Admin access should be managed through proper role-based permissions, not wildcards
         
         if (!hasAccess) {
           logger.warn(`Unauthorized merchant access attempt: API key not authorized for merchant ${merchantId}`, {
