@@ -1208,25 +1208,61 @@ router.post('/verification',
  *   }
  * }
  */
-router.get('/verification/:userId', async (req, res) => {
+router.get('/verification/:userId', 
+  validateMerchantAccess(),
+  async (req, res) => {
   try {
     const userId = req.params.userId;
+    const requestingMerchantId = req.merchantId;
     
     const options = {
       deviceId: req.query.deviceId ? parseInt(req.query.deviceId, 10) : null,
       verificationType: req.query.verificationType,
       hoursValid: req.query.hoursValid ? parseInt(req.query.hoursValid, 10) : 24,
-      merchantId: req.query.merchantId
+      merchantId: req.query.merchantId || requestingMerchantId
     };
     
+    // SECURITY: Only allow merchants to check verification for users they have a relationship with
+    if (options.merchantId !== requestingMerchantId) {
+      logger.warn('SECURITY: Merchant attempting to check verification for different merchant', {
+        requestingMerchantId,
+        targetMerchantId: options.merchantId,
+        userId,
+        ip: req.ip
+      });
+      
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied: Cannot check verification for other merchants',
+        code: 'CROSS_MERCHANT_VERIFICATION_DENIED'
+      });
+    }
+    
     const verification = await verificationRepository.getVerificationStatus(userId, options);
+    
+    // Audit log for verification checks
+    logger.info('AUDIT: Verification status check', {
+      requestingMerchantId,
+      userId,
+      verificationType: options.verificationType,
+      verified: verification?.verified || false,
+      ip: req.ip,
+      timestamp: new Date().toISOString()
+    });
     
     res.json({
       success: true,
       verification
     });
   } catch (error) {
-    logger.error('Error checking verification status:', error);
+    logger.error('Error checking verification status:', {
+      error: error.message,
+      stack: error.stack,
+      userId: req.params.userId,
+      merchantId: req.merchantId,
+      ip: req.ip
+    });
+    
     res.status(500).json({
       success: false,
       error: 'Failed to check verification status'
