@@ -35,12 +35,115 @@ const { dbConnection } = require('../database/db-connection');
 const { validateVerification, sanitizeString, validatePaymentInput } = require('../middleware/payment-validation');
 const { sanitizeInput, sanitizeVerificationInput } = require('../middleware/input-sanitization');
 const { rateLimiter } = require('../middleware/rate-limiter');
+const { validateApiKey, validateMerchantAccess } = require('../middleware/auth-middleware');
 
 // SECURITY: Apply rate limiting to all identity API routes
 router.use(rateLimiter({ 
   maxRequests: 50, 
   windowMs: 15 * 60 * 1000 // 50 requests per 15 minutes 
 }));
+
+// CRITICAL SECURITY: Apply API key validation to all routes
+router.use(validateApiKey({
+  excludePaths: ['/health', '/status']
+}));
+
+/**
+ * SECURITY MIDDLEWARE: Cross-Merchant Authorization
+ * Validates that the requesting merchant has authorization to access the specific user data
+ */
+function validateCrossMerchantAccess(req, res, next) {
+  try {
+    const requestingMerchantId = req.body.merchantId || req.query.merchantId || req.headers['x-merchant-id'];
+    const universalId = req.params.universalId;
+    
+    if (!requestingMerchantId) {
+      logger.error('SECURITY VIOLATION: Cross-merchant query without merchant identification', {
+        universalId,
+        path: req.path,
+        method: req.method,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+        apiKeyPrefix: req.apiKeyInfo?.key?.substring(0, 8) + '...'
+      });
+      
+      return res.status(400).json({
+        success: false,
+        error: 'Merchant ID required for cross-merchant data access'
+      });
+    }
+    
+    if (!universalId) {
+      logger.error('SECURITY VIOLATION: Cross-merchant query without user identification', {
+        requestingMerchantId,
+        path: req.path,
+        method: req.method,
+        ip: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+      
+      return res.status(400).json({
+        success: false,
+        error: 'User ID required for cross-merchant data access'
+      });
+    }
+    
+    // Store for use in route handler and audit logging
+    req.requestingMerchantId = requestingMerchantId;
+    req.targetUserId = universalId;
+    
+    next();
+  } catch (error) {
+    logger.error('Error in cross-merchant authorization middleware:', {
+      error: error.message,
+      stack: error.stack,
+      path: req.path,
+      method: req.method,
+      ip: req.ip
+    });
+    
+    res.status(500).json({
+      success: false,
+      error: 'Authorization validation error'
+    });
+  }
+}
+
+/**
+ * SECURITY MIDDLEWARE: Audit Cross-Merchant Access
+ * Logs all cross-merchant data access attempts for security monitoring
+ */
+function auditCrossMerchantAccess(req, res, next) {
+  const startTime = Date.now();
+  
+  // Capture original json method
+  const originalJson = res.json;
+  
+  res.json = function(data) {
+    const duration = Date.now() - startTime;
+    
+    // Audit log for all cross-merchant access attempts
+    logger.info('AUDIT: Cross-merchant data access', {
+      requestingMerchantId: req.requestingMerchantId,
+      targetUserId: req.targetUserId,
+      path: req.path,
+      method: req.method,
+      statusCode: res.statusCode,
+      duration: `${duration}ms`,
+      success: data.success || false,
+      dataCount: data.merchants?.length || 0,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+      apiKeyPrefix: req.apiKeyInfo?.key?.substring(0, 8) + '...',
+      timestamp: new Date().toISOString()
+    });
+    
+    // Call original json method
+    originalJson.call(this, data);
+  };
+  
+  next();
+}
 
 // ============================================================================
 // USER MANAGEMENT (Source of Truth for Checkout Service)
@@ -809,12 +912,24 @@ router.post('/identity/merchant', validateRequired(['merchantId', 'merchantUserI
 });
 
 /**
- * Get merchant associations for a user
+ * Get merchant associations for a user - SECURED ENDPOINT
  * 
  * GET /api/identity/:universalId/merchants
  * 
+ * SECURITY REQUIREMENTS:
+ * - API key authentication required
+ * - Merchant must have a verified relationship with the user
+ * - Cross-merchant access is audited and logged
+ * - Requesting merchant must be specified in query params or headers
+ * 
  * Params:
  * - universalId: Universal ID to check
+ * 
+ * Query:
+ * - merchantId: Requesting merchant ID (REQUIRED)
+ * 
+ * Headers:
+ * - X-Merchant-ID: Alternative merchant identification
  * 
  * Response:
  * {
@@ -823,28 +938,106 @@ router.post('/identity/merchant', validateRequired(['merchantId', 'merchantUserI
  *     merchantId: string,
  *     merchantUserId: string,
  *     lastUpdated: string
- *   }>
+ *   }>,
+ *   accessLevel: string,
+ *   auditId: string
  * }
  */
-router.get('/identity/:universalId/merchants', async (req, res) => {
+router.get('/identity/:universalId/merchants', 
+  validateCrossMerchantAccess,
+  auditCrossMerchantAccess,
+  async (req, res) => {
   try {
     const universalId = req.params.universalId;
+    const requestingMerchantId = req.requestingMerchantId;
     
-    const associations = await crossMerchantIdentityRepository.getMerchantAssociations(universalId);
+    // SECURITY: Verify requesting merchant has a relationship with this user
+    const userMerchantRelationship = await crossMerchantIdentityRepository.findUniversalIdByMerchantUser(
+      requestingMerchantId, 
+      universalId
+    );
+    
+    if (!userMerchantRelationship) {
+      // Check if merchant has any association with this user through device fingerprinting
+      const userDevices = await crossMerchantIdentityRepository.getUserDevices(universalId, {
+        merchantId: requestingMerchantId,
+        activeOnly: true
+      });
+      
+      if (!userDevices || userDevices.length === 0) {
+        logger.warn('SECURITY: Unauthorized cross-merchant data access attempt', {
+          requestingMerchantId,
+          targetUserId: universalId,
+          reason: 'No verified relationship',
+          ip: req.ip,
+          userAgent: req.headers['user-agent']
+        });
+        
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied: No verified relationship with this user',
+          code: 'UNAUTHORIZED_CROSS_MERCHANT_ACCESS'
+        });
+      }
+    }
+    
+    // SECURITY: Get associations - merchant can only see their own plus limited cross-merchant data
+    const allAssociations = await crossMerchantIdentityRepository.getMerchantAssociations(universalId);
+    
+    // Filter associations - requesting merchant gets full data, others get limited data
+    const filteredAssociations = allAssociations.map(assoc => {
+      if (assoc.merchant_id === requestingMerchantId) {
+        // Full data for requesting merchant
+        return {
+          merchantId: assoc.merchant_id,
+          merchantUserId: assoc.merchant_user_id,
+          lastUpdated: assoc.last_updated,
+          accessLevel: 'full'
+        };
+      } else {
+        // Limited cross-merchant data (no merchant user IDs)
+        return {
+          merchantId: assoc.merchant_id,
+          merchantUserId: '[REDACTED]', // Security: Hide other merchant's user IDs
+          lastUpdated: assoc.last_updated,
+          accessLevel: 'limited'
+        };
+      }
+    });
+    
+    // Generate audit ID for tracking
+    const auditId = `audit_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+    
+    logger.info('SECURITY: Authorized cross-merchant data access', {
+      requestingMerchantId,
+      targetUserId: universalId,
+      totalAssociations: allAssociations.length,
+      filteredAssociations: filteredAssociations.length,
+      auditId,
+      hasDirectRelationship: !!userMerchantRelationship
+    });
     
     res.json({
       success: true,
-      merchants: associations.map(assoc => ({
-        merchantId: assoc.merchant_id,
-        merchantUserId: assoc.merchant_user_id,
-        lastUpdated: assoc.last_updated
-      }))
+      merchants: filteredAssociations,
+      accessLevel: userMerchantRelationship ? 'authorized' : 'device_verified',
+      auditId,
+      totalMerchants: filteredAssociations.length,
+      requestingMerchant: requestingMerchantId
     });
   } catch (error) {
-    logger.error('Error getting merchant associations:', error);
+    logger.error('Error getting merchant associations:', {
+      error: error.message,
+      stack: error.stack,
+      requestingMerchantId: req.requestingMerchantId,
+      targetUserId: req.targetUserId,
+      ip: req.ip
+    });
+    
     res.status(500).json({
       success: false,
-      error: 'Failed to get merchant associations'
+      error: 'Failed to get merchant associations',
+      code: 'INTERNAL_ERROR'
     });
   }
 });
