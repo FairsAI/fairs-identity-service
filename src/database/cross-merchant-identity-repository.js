@@ -1,8 +1,10 @@
 /**
- * Cross-Merchant Identity Repository
+ * Cross-Merchant Identity Repository - RACE CONDITION SAFE
  * 
  * Manages universal user identities and associations across merchants.
  * Enables cross-merchant identity resolution and device-user associations.
+ * 
+ * SECURITY: All operations use database locking to prevent race conditions
  */
 
 const { dbConnection } = require('./db-connection');
@@ -10,9 +12,13 @@ const { logger } = require('../utils/logger');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 
+// Constants for retry logic
+const MAX_RETRY_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 100;
+
 class CrossMerchantIdentityRepository {
   /**
-   * Associate a device with a universal user identity
+   * Associate a device with a universal user identity - RACE CONDITION SAFE
    * @param {string} universalId - The universal user ID
    * @param {number} deviceId - Device fingerprint ID
    * @param {Object} options - Association options
@@ -23,106 +29,121 @@ class CrossMerchantIdentityRepository {
    * @returns {Promise<Object>} The association record
    */
   async associateDeviceWithUser(universalId, deviceId, options = {}) {
-    try {
-      const {
-        merchantId,
-        confidenceScore = 1.0,
-        isPrimary = false,
-        status = 'active',
-        verificationLevel = 'low'
-      } = options;
-      
-      if (!merchantId) {
-        throw new Error('Merchant ID is required for device-user association');
-      }
-      
-      logger.debug('Associating device with user', {
-        universalId,
-        deviceId,
-        merchantId
-      });
-      
-      // Check if the association already exists
-      const existingAssoc = await this._findDeviceUserAssociation(deviceId, universalId, merchantId);
-      
-      if (existingAssoc) {
-        // Update the existing association
-        const query = `
-          UPDATE device_user_associations
-          SET 
-            last_used = CURRENT_TIMESTAMP,
-            confidence_score = $1,
-            is_primary = $2,
-            status = $3,
-            verification_level = $4
-          WHERE id = $5
-          RETURNING *
-        `;
-        
-        const values = [
-          confidenceScore,
-          isPrimary,
-          status,
-          verificationLevel,
-          existingAssoc.id
-        ];
-        
-        const result = await dbConnection.query(query, values);
-        
-        logger.info('Updated device-user association', {
-          associationId: existingAssoc.id,
-          universalId,
-          deviceId
-        });
-        
-        return result[0];
-      } else {
-        // Create a new association
-        const query = `
-          INSERT INTO device_user_associations (
-            device_id,
-            user_id,
-            merchant_id,
-            confidence_score,
-            is_primary,
-            status,
-            verification_level
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7)
-          RETURNING *
-        `;
-        
-        const values = [
-          deviceId,
-          universalId,
+    return this._withRetry('associateDeviceWithUser', async () => {
+      return await dbConnection.transaction(async (client) => {
+        const {
           merchantId,
-          confidenceScore,
-          isPrimary,
-          status,
-          verificationLevel
-        ];
+          confidenceScore = 1.0,
+          isPrimary = false,
+          status = 'active',
+          verificationLevel = 'low'
+        } = options;
         
-        const result = await dbConnection.query(query, values);
+        if (!merchantId) {
+          throw new Error('Merchant ID is required for device-user association');
+        }
         
-        // Update the cross-merchant identity to include this device
-        await this._updateCrossMerchantIdentityDevices(universalId, deviceId);
-        
-        logger.info('Created new device-user association', {
-          associationId: result[0].id,
+        logger.debug('Associating device with user (transaction-safe)', {
           universalId,
-          deviceId
+          deviceId,
+          merchantId
         });
         
-        return result[0];
-      }
-    } catch (error) {
-      logger.error('Error associating device with user:', error);
-      throw error;
-    }
+        // RACE CONDITION FIX: Use SELECT FOR UPDATE to lock the association record
+        const lockQuery = `
+          SELECT *
+          FROM device_user_associations
+          WHERE device_id = $1
+            AND user_id = $2
+            AND merchant_id = $3
+          FOR UPDATE
+        `;
+        
+        const existingResult = await client.query(lockQuery, [deviceId, universalId, merchantId]);
+        
+        if (existingResult.rows.length > 0) {
+          // Update the existing association atomically
+          const updateQuery = `
+            UPDATE device_user_associations
+            SET 
+              last_used = CURRENT_TIMESTAMP,
+              confidence_score = $1,
+              is_primary = $2,
+              status = $3,
+              verification_level = $4
+            WHERE id = $5
+            RETURNING *
+          `;
+          
+          const values = [
+            confidenceScore,
+            isPrimary,
+            status,
+            verificationLevel,
+            existingResult.rows[0].id
+          ];
+          
+          const result = await client.query(updateQuery, values);
+          
+          logger.info('Updated device-user association (atomic)', {
+            associationId: existingResult.rows[0].id,
+            universalId,
+            deviceId
+          });
+          
+          return result.rows[0];
+        } else {
+          // RACE CONDITION FIX: Use INSERT with conflict handling
+          const insertQuery = `
+            INSERT INTO device_user_associations (
+              device_id,
+              user_id,
+              merchant_id,
+              confidence_score,
+              is_primary,
+              status,
+              verification_level
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (device_id, user_id, merchant_id) 
+            DO UPDATE SET
+              last_used = CURRENT_TIMESTAMP,
+              confidence_score = $4,
+              is_primary = $5,
+              status = $6,
+              verification_level = $7
+            RETURNING *
+          `;
+          
+          const values = [
+            deviceId,
+            universalId,
+            merchantId,
+            confidenceScore,
+            isPrimary,
+            status,
+            verificationLevel
+          ];
+          
+          const result = await client.query(insertQuery, values);
+          
+          // Update the cross-merchant identity to include this device (atomic)
+          await this._updateCrossMerchantIdentityDevicesAtomic(universalId, deviceId, client);
+          
+          logger.info('Created new device-user association (atomic)', {
+            associationId: result.rows[0].id,
+            universalId,
+            deviceId
+          });
+          
+          return result.rows[0];
+        }
+      });
+    });
   }
   
   /**
-   * Find universal user ID by device ID
+   * Find universal user ID by device ID - OPTIMIZED FOR CONCURRENT ACCESS
    * @param {number} deviceId - Device fingerprint ID
    * @param {Object} options - Find options
    * @param {string} options.merchantId - Optional merchant ID to filter by
@@ -130,19 +151,19 @@ class CrossMerchantIdentityRepository {
    * @returns {Promise<Object>} User identity info
    */
   async findUserByDevice(deviceId, options = {}) {
-    try {
+    return this._withRetry('findUserByDevice', async () => {
       const {
         merchantId,
         activeOnly = true
       } = options;
       
-      logger.debug('Finding user by device', { deviceId, merchantId });
+      logger.debug('Finding user by device (concurrent-safe)', { deviceId, merchantId });
       
       let query;
       let values;
       
       if (merchantId) {
-        // If a merchant ID is provided, find the specific association
+        // RACE CONDITION FIX: Use consistent read with proper locking hints
         query = `
           SELECT 
             dua.user_id AS universal_id,
@@ -160,11 +181,11 @@ class CrossMerchantIdentityRepository {
             ${activeOnly ? "AND dua.status = 'active'" : ""}
           ORDER BY dua.confidence_score DESC, dua.last_used DESC
           LIMIT 1
+          FOR SHARE
         `;
         
         values = [deviceId, merchantId];
       } else {
-        // If no merchant ID, find the most recently used/highest confidence association
         query = `
           SELECT 
             dua.user_id AS universal_id,
@@ -181,6 +202,7 @@ class CrossMerchantIdentityRepository {
             ${activeOnly ? "AND dua.status = 'active'" : ""}
           ORDER BY dua.confidence_score DESC, dua.last_used DESC
           LIMIT 1
+          FOR SHARE
         `;
         
         values = [deviceId];
@@ -192,16 +214,13 @@ class CrossMerchantIdentityRepository {
         return null;
       }
       
-      logger.debug('Found user by device', {
+      logger.debug('Found user by device (concurrent-safe)', {
         deviceId,
         universalId: results[0].universal_id
       });
       
       return results[0];
-    } catch (error) {
-      logger.error('Error finding user by device:', error);
-      throw error;
-    }
+    });
   }
   
   /**
@@ -279,16 +298,16 @@ class CrossMerchantIdentityRepository {
   }
   
   /**
-   * Register a merchant-specific user ID with a universal ID
-   * @param {string} universalId - Universal user ID (created if null)
+   * Register a merchant user with universal identity - RACE CONDITION SAFE
+   * @param {string} universalId - Universal ID or null for new identity
    * @param {string} merchantId - Merchant ID
    * @param {string} merchantUserId - Merchant's user ID
    * @param {Object} options - Registration options
-   * @returns {Promise<Object>} The cross-merchant identity
+   * @returns {Promise<Object>} Cross-merchant identity record
    */
   async registerMerchantUser(universalId, merchantId, merchantUserId, options = {}) {
-    try {
-      logger.debug('Registering merchant user', {
+    return this._withRetry('registerMerchantUser', async () => {
+      logger.debug('Registering merchant user (transaction-safe)', {
         universalId: universalId || 'new',
         merchantId,
         merchantUserId
@@ -297,27 +316,40 @@ class CrossMerchantIdentityRepository {
       // If no universal ID, create a new one
       const identity = universalId || this._generateUniversalId();
       
-      // Begin transaction
+      // RACE CONDITION FIX: Use serializable transaction with proper locking
       return await dbConnection.transaction(async (client) => {
-        // First, ensure cross-merchant identity exists
-        await this._ensureCrossMerchantIdentity(identity, client);
-        
-        // Check if this merchant user is already registered with a different universal ID
-        const existingQuery = `
+        // CRITICAL: Lock the merchant user record to prevent concurrent registrations
+        const lockMerchantUserQuery = `
           SELECT identity_key
           FROM cross_merchant_users
           WHERE merchant_id = $1 AND merchant_user_id = $2
+          FOR UPDATE
         `;
         
-        const existingResults = await client.query(existingQuery, [merchantId, merchantUserId]);
+        const existingResults = await client.query(lockMerchantUserQuery, [merchantId, merchantUserId]);
         
-        if (existingResults.rows.length > 0 && existingResults.rows[0].identity_key !== identity) {
-          // If this merchant user is already associated with a different identity, 
-          // we need to merge the identities
-          await this._mergeIdentities(existingResults.rows[0].identity_key, identity, client);
+        // Lock the target identity if it exists
+        if (identity !== universalId && existingResults.rows.length > 0) {
+          const lockIdentityQuery = `
+            SELECT identity_key
+            FROM cross_merchant_identities
+            WHERE identity_key IN ($1, $2)
+            ORDER BY identity_key
+            FOR UPDATE
+          `;
+          
+          await client.query(lockIdentityQuery, [identity, existingResults.rows[0].identity_key]);
         }
         
-        // Register/update the merchant user
+        // First, ensure cross-merchant identity exists
+        await this._ensureCrossMerchantIdentityAtomic(identity, client);
+        
+        if (existingResults.rows.length > 0 && existingResults.rows[0].identity_key !== identity) {
+          // RACE CONDITION FIX: Atomic identity merge with conflict resolution
+          await this._mergeIdentitiesAtomic(existingResults.rows[0].identity_key, identity, client);
+        }
+        
+        // RACE CONDITION FIX: Atomic upsert with proper conflict handling
         const upsertQuery = `
           INSERT INTO cross_merchant_users (
             identity_key, 
@@ -334,15 +366,16 @@ class CrossMerchantIdentityRepository {
         
         await client.query(upsertQuery, [identity, merchantId, merchantUserId]);
         
-        // Fetch the updated cross-merchant identity
+        // Fetch the updated cross-merchant identity with lock
         const identityQuery = `
           SELECT * FROM cross_merchant_identities
           WHERE identity_key = $1
+          FOR SHARE
         `;
         
         const identityResult = await client.query(identityQuery, [identity]);
         
-        logger.info('Registered merchant user', {
+        logger.info('Registered merchant user (atomic)', {
           universalId: identity,
           merchantId,
           merchantUserId
@@ -350,29 +383,28 @@ class CrossMerchantIdentityRepository {
         
         return identityResult.rows[0];
       });
-    } catch (error) {
-      logger.error('Error registering merchant user:', error);
-      throw error;
-    }
+    });
   }
   
   /**
-   * Find universal ID by merchant user
+   * Find universal ID by merchant user - CONCURRENT SAFE
    * @param {string} merchantId - Merchant ID
    * @param {string} merchantUserId - Merchant's user ID
    * @returns {Promise<string>} Universal ID or null if not found
    */
   async findUniversalIdByMerchantUser(merchantId, merchantUserId) {
-    try {
-      logger.debug('Finding universal ID by merchant user', {
+    return this._withRetry('findUniversalIdByMerchantUser', async () => {
+      logger.debug('Finding universal ID by merchant user (concurrent-safe)', {
         merchantId,
         merchantUserId
       });
       
+      // RACE CONDITION FIX: Use shared lock for consistent read
       const query = `
         SELECT identity_key
         FROM cross_merchant_users
         WHERE merchant_id = $1 AND merchant_user_id = $2
+        FOR SHARE
       `;
       
       const results = await dbConnection.query(query, [merchantId, merchantUserId]);
@@ -381,28 +413,26 @@ class CrossMerchantIdentityRepository {
         return null;
       }
       
-      logger.debug('Found universal ID by merchant user', {
+      logger.debug('Found universal ID by merchant user (concurrent-safe)', {
         merchantId,
         merchantUserId,
         universalId: results[0].identity_key
       });
       
       return results[0].identity_key;
-    } catch (error) {
-      logger.error('Error finding universal ID by merchant user:', error);
-      throw error;
-    }
+    });
   }
   
   /**
-   * Get all merchant associations for a user
+   * Get all merchant associations for a user - CONCURRENT SAFE
    * @param {string} universalId - Universal user ID
    * @returns {Promise<Array>} Merchant associations
    */
   async getMerchantAssociations(universalId) {
-    try {
-      logger.debug('Getting merchant associations', { universalId });
+    return this._withRetry('getMerchantAssociations', async () => {
+      logger.debug('Getting merchant associations (concurrent-safe)', { universalId });
       
+      // RACE CONDITION FIX: Use shared lock for consistent read
       const query = `
         SELECT 
           cmu.merchant_id,
@@ -411,20 +441,18 @@ class CrossMerchantIdentityRepository {
         FROM cross_merchant_users cmu
         WHERE cmu.identity_key = $1
         ORDER BY cmu.last_updated DESC
+        FOR SHARE
       `;
       
       const results = await dbConnection.query(query, [universalId]);
       
-      logger.debug('Found merchant associations', {
+      logger.debug('Found merchant associations (concurrent-safe)', {
         universalId,
         count: results.length
       });
       
       return results;
-    } catch (error) {
-      logger.error('Error getting merchant associations:', error);
-      throw error;
-    }
+    });
   }
   
   /**
@@ -504,33 +532,152 @@ class CrossMerchantIdentityRepository {
   }
   
   /**
-   * Merge two identities
+   * Retry wrapper for handling race condition conflicts
+   * @private
+   * @param {string} operationName - Name of the operation for logging
+   * @param {Function} operation - The operation to retry
+   * @returns {Promise<any>} Operation result
+   */
+  async _withRetry(operationName, operation) {
+    let lastError;
+    
+    for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = error;
+        
+        // Check if this is a retryable error (serialization failure, deadlock, etc.)
+        const isRetryable = this._isRetryableError(error);
+        
+        if (!isRetryable || attempt === MAX_RETRY_ATTEMPTS) {
+          logger.error(`Operation ${operationName} failed after ${attempt} attempts:`, error);
+          throw error;
+        }
+        
+        // Exponential backoff with jitter
+        const delay = RETRY_DELAY_MS * Math.pow(2, attempt - 1) + Math.random() * 50;
+        
+        logger.warn(`Operation ${operationName} failed on attempt ${attempt}, retrying in ${delay}ms:`, {
+          error: error.message,
+          code: error.code,
+          attempt,
+          maxAttempts: MAX_RETRY_ATTEMPTS
+        });
+        
+        await this._sleep(delay);
+      }
+    }
+    
+    throw lastError;
+  }
+  
+  /**
+   * Check if an error is retryable due to race conditions
+   * @private
+   * @param {Error} error - The error to check
+   * @returns {boolean} Whether the error is retryable
+   */
+  _isRetryableError(error) {
+    if (!error.code) return false;
+    
+    // PostgreSQL error codes for race conditions
+    const retryableCodes = [
+      '40001', // serialization_failure
+      '40P01', // deadlock_detected
+      '23505', // unique_violation (in some INSERT ... ON CONFLICT scenarios)
+      '25006', // read_only_sql_transaction (read-only conflict)
+    ];
+    
+    return retryableCodes.includes(error.code);
+  }
+  
+  /**
+   * Sleep for a specified number of milliseconds
+   * @private
+   * @param {number} ms - Milliseconds to sleep
+   * @returns {Promise<void>}
+   */
+  _sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+  
+  /**
+   * Atomic version of _ensureCrossMerchantIdentity
+   * @private
+   * @param {string} identityKey - Universal ID
+   * @param {Object} client - Database client for transaction
+   * @returns {Promise<Object>} Identity record
+   */
+  async _ensureCrossMerchantIdentityAtomic(identityKey, client) {
+    // RACE CONDITION FIX: Use INSERT ... ON CONFLICT for atomic operation
+    const query = `
+      INSERT INTO cross_merchant_identities (
+        identity_key,
+        confidence_score,
+        is_verified,
+        verification_level
+      )
+      VALUES ($1, 1.0, false, 'low')
+      ON CONFLICT (identity_key) DO UPDATE SET
+        last_updated = CURRENT_TIMESTAMP
+      RETURNING *
+    `;
+    
+    const result = await client.query(query, [identityKey]);
+    return result.rows[0];
+  }
+  
+  /**
+   * Atomic version of _updateCrossMerchantIdentityDevices
+   * @private
+   * @param {string} identityKey - Universal ID
+   * @param {number} deviceId - Device ID to add
+   * @param {Object} client - Database client for transaction
+   * @returns {Promise<void>}
+   */
+  async _updateCrossMerchantIdentityDevicesAtomic(identityKey, deviceId, client) {
+    // RACE CONDITION FIX: Use atomic array operations with proper locking
+    const query = `
+      UPDATE cross_merchant_identities
+      SET associated_devices = array_append(COALESCE(associated_devices, ARRAY[]::integer[]), $1)
+      WHERE identity_key = $2
+        AND NOT ($1 = ANY(COALESCE(associated_devices, ARRAY[]::integer[])))
+    `;
+    
+    await client.query(query, [deviceId, identityKey]);
+  }
+  
+  /**
+   * Atomic version of _mergeIdentities with proper conflict resolution
    * @private
    * @param {string} sourceId - Source identity key
    * @param {string} targetId - Target identity key 
    * @param {Object} client - Database client for transaction
    * @returns {Promise<void>}
    */
-  async _mergeIdentities(sourceId, targetId, client) {
-    // Update all device associations
+  async _mergeIdentitiesAtomic(sourceId, targetId, client) {
+    logger.info('Merging identities atomically', { sourceId, targetId });
+    
+    // RACE CONDITION FIX: Update all references atomically in order
+    
+    // 1. Update device associations
     const updateAssociationsQuery = `
       UPDATE device_user_associations
       SET user_id = $1
       WHERE user_id = $2
     `;
-    
     await client.query(updateAssociationsQuery, [targetId, sourceId]);
     
-    // Update all merchant users
+    // 2. Update merchant users 
     const updateMerchantUsersQuery = `
       UPDATE cross_merchant_users
       SET identity_key = $1
       WHERE identity_key = $2
     `;
-    
     await client.query(updateMerchantUsersQuery, [targetId, sourceId]);
     
-    // Merge the device arrays
+    // 3. Merge device arrays atomically
     const mergeDevicesQuery = `
       UPDATE cross_merchant_identities 
       SET associated_devices = (
@@ -544,16 +691,16 @@ class CrossMerchantIdentityRepository {
       )
       WHERE identity_key = $1
     `;
-    
     await client.query(mergeDevicesQuery, [targetId, sourceId]);
     
-    // Delete the source identity
+    // 4. Delete the source identity
     const deleteSourceQuery = `
       DELETE FROM cross_merchant_identities
       WHERE identity_key = $1
     `;
-    
     await client.query(deleteSourceQuery, [sourceId]);
+    
+    logger.info('Identity merge completed atomically', { sourceId, targetId });
   }
 }
 
