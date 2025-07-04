@@ -70,6 +70,16 @@ class DatabaseConnection {
       // Continue without throwing - handle per request
       this.isConnected = false;
       logger.warn('⚠️ Service will continue - database connection will retry per request');
+      
+      // In development, retry connection after a delay
+      if (config.env === 'development') {
+        setTimeout(() => {
+          logger.info('🔄 Retrying database connection...');
+          this.initialize().catch(err => {
+            logger.error('Database retry failed:', err.message);
+          });
+        }, 5000);
+      }
     }
   }
 
@@ -86,8 +96,19 @@ class DatabaseConnection {
       return [{ id: 1, created_at: new Date(), fingerprint_hash: 'mock-hash' }];
     }
 
-    // For development without database, return mock data with proper user fields
+    // For development without database, try to reconnect before falling back to mock data
     if (config.env === 'development' && !this.isConnected) {
+      logger.debug('Attempting to reconnect to database before query execution');
+      try {
+        await this.initialize();
+        // If connection successful, proceed with the query
+        if (this.isConnected && this.pool) {
+          return this.query(text, params); // Retry the query with real connection
+        }
+      } catch (error) {
+        logger.warn('Failed to reconnect, using mock data:', error.message);
+      }
+      
       logger.debug('Mock database query executed (no connection)', { query: text.substring(0, 50) + '...' });
       // Return mock user data that matches the expected schema
       if (text.includes('identity_service.users')) {
