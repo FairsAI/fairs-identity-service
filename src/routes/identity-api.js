@@ -36,8 +36,18 @@ const { validateVerification, sanitizeString, validatePaymentInput } = require('
 const { sanitizeInput, sanitizeVerificationInput } = require('../middleware/input-sanitization');
 const { rateLimiter } = require('../middleware/rate-limiter');
 const { validateApiKey, validateMerchantAccess } = require('../middleware/auth-middleware');
+const { 
+  createValidationMiddleware, 
+  validateParameters, 
+  detectSecurityTests, 
+  enhancedRateLimit,
+  userIdSchema,
+  emailSchema 
+} = require('../middleware/validation-middleware');
 
-// SECURITY: Apply rate limiting to all identity API routes
+// SECURITY: Apply comprehensive security middleware
+router.use(detectSecurityTests()); // Detect security testing patterns
+router.use(enhancedRateLimit()); // Enhanced rate limiting
 router.use(rateLimiter({ 
   maxRequests: 50, 
   windowMs: 15 * 60 * 1000 // 50 requests per 15 minutes 
@@ -1457,7 +1467,7 @@ router.get('/user-by-email/:email', async (req, res) => {
 router.get('/test-user-lookup/:email', async (req, res) => {
   try {
     const email = req.params.email;
-    console.log('🔍 Testing user lookup for:', email);
+                    console.log('🔍 Testing user lookup for email lookup request');
     
     // Test the exact same query as the main lookup
     const escapedEmail = email.replace(/'/g, "''").trim();
