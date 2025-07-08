@@ -47,10 +47,10 @@ const {
 
 // SECURITY: Apply comprehensive security middleware
 router.use(detectSecurityTests()); // Detect security testing patterns
-router.use(enhancedRateLimit()); // Enhanced rate limiting
+router.use(enhancedRateLimit()); // Enhanced rate limiting - adjusted for checkout flow requirements
 router.use(rateLimiter({ 
-  maxRequests: 50, 
-  windowMs: 15 * 60 * 1000 // 50 requests per 15 minutes 
+  maxRequests: 120, 
+  windowMs: 15 * 60 * 1000 // 120 requests per 15 minutes (supports multiple checkout flows)
 }));
 
 // CRITICAL SECURITY: Apply API key validation to all routes
