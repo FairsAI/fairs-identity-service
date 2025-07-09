@@ -24,10 +24,10 @@ class UserPaymentMethodRepository {
     
     const query = `
       INSERT INTO identity_service.user_payment_methods 
-      (user_id, payment_type, provider, label, last_four_digits, 
+      (user_id, payment_type, provider, label, cardholder_name, last_four_digits, 
        expiry_month, expiry_year, payment_token, billing_address_id, is_default, 
        created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
       RETURNING *;
     `;
 
@@ -36,6 +36,7 @@ class UserPaymentMethodRepository {
       paymentData.paymentType || 'credit_card',
       paymentData.provider || null,
       paymentData.label || 'Payment Method',
+      paymentData.cardholderName || paymentData.cardholder_name || 'Card Holder',
       paymentData.lastFourDigits || paymentData.last_four_digits || null,
       paymentData.expiryMonth || paymentData.expiry_month || null,
       paymentData.expiryYear || paymentData.expiry_year || null,
@@ -104,6 +105,7 @@ class UserPaymentMethodRepository {
             payment_type: row.payment_type,
             provider: row.provider,
             label: row.label,
+            cardholder_name: row.cardholder_name,
             last_four_digits: row.last_four_digits,
             expiry_month: row.expiry_month,
             expiry_year: row.expiry_year,
@@ -183,7 +185,7 @@ class UserPaymentMethodRepository {
 
     // Build dynamic update query
     const updateableFields = [
-      'payment_type', 'provider', 'label', 'last_four_digits',
+      'payment_type', 'provider', 'label', 'cardholder_name', 'last_four_digits',
       'expiry_month', 'expiry_year', 'payment_token', 'billing_address_id',
       'is_default'
     ];
@@ -430,13 +432,14 @@ class UserPaymentMethodRepository {
   }
 
   /**
-   * Validate billing address belongs to user and supports billing
+   * Validate billing address belongs to user (allow any address type)
+   * Updated to allow shipping addresses to be used as billing addresses
    */
   async validateBillingAddress(billingAddressId, userId) {
     const query = `
       SELECT id, user_id, address_type 
       FROM identity_service.user_addresses 
-      WHERE id = $1 AND user_id = $2 AND (address_type = 'billing' OR address_type = 'both')
+      WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
     `;
 
     try {

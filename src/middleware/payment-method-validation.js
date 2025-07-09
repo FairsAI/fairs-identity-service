@@ -108,6 +108,24 @@ const paymentMethodSchema = Joi.object({
     .pattern(/^\d{3,4}$/)
     .optional(),
   
+  // Cardholder information
+  cardholderName: Joi.string()
+    .pattern(/^[a-zA-Z\s'-]+$/)
+    .min(1)
+    .max(100)
+    .messages({
+      'string.pattern.base': 'Cardholder name must contain only letters, spaces, apostrophes and hyphens',
+      'string.min': 'Cardholder name is required',
+      'string.max': 'Cardholder name must be 100 characters or less'
+    })
+    .optional(),
+  
+  cardholder_name: Joi.string()
+    .pattern(/^[a-zA-Z\s'-]+$/)
+    .min(1)
+    .max(100)
+    .optional(),
+  
   // Metadata
   label: Joi.string().max(100).default('Personal Card'),
   nickname: Joi.string().max(100).optional(),
@@ -119,9 +137,15 @@ const paymentMethodSchema = Joi.object({
   isDefault: Joi.boolean().default(false),
   is_default: Joi.boolean().optional(),
   
-  // Billing address
-  billingAddressId: Joi.number().integer().positive().optional(),
-  billing_address_id: Joi.number().integer().positive().optional(),
+  // Billing address (support both UUID strings and integer IDs)
+  billingAddressId: Joi.alternatives().try(
+    Joi.string().uuid(),
+    Joi.number().integer().positive()
+  ).optional(),
+  billing_address_id: Joi.alternatives().try(
+    Joi.string().uuid(),
+    Joi.number().integer().positive()
+  ).optional(),
   
   // Additional fields (phone, etc.)
   phone: Joi.string()
@@ -243,6 +267,9 @@ function normalizePaymentMethodData(data) {
   }
   if (data.is_default && data.isDefault === undefined) {
     normalized.isDefault = data.is_default;
+  }
+  if (data.cardholder_name && !data.cardholderName) {
+    normalized.cardholderName = data.cardholder_name;
   }
   
   // Ensure payment type consistency

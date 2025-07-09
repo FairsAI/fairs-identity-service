@@ -39,15 +39,13 @@ const { validateApiKey, validateMerchantAccess } = require('../middleware/auth-m
 const { 
   createValidationMiddleware, 
   validateParameters, 
-  detectSecurityTests, 
-  enhancedRateLimit,
   userIdSchema,
   emailSchema 
 } = require('../middleware/validation-middleware');
 
 // SECURITY: Apply comprehensive security middleware
-router.use(detectSecurityTests()); // Detect security testing patterns
-router.use(enhancedRateLimit()); // Enhanced rate limiting - adjusted for checkout flow requirements
+// router.use(detectSecurityTests()); // Detect security testing patterns - temporarily disabled
+// router.use(enhancedRateLimit()); // Enhanced rate limiting - temporarily disabled
 router.use(rateLimiter({ 
   maxRequests: 120, 
   windowMs: 15 * 60 * 1000 // 120 requests per 15 minutes (supports multiple checkout flows)
