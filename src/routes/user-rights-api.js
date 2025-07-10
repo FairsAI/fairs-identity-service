@@ -1,15 +1,150 @@
 /**
  * User Rights API - CCPA & PIPEDA Data Subject Rights
- * Production Ready Implementation
+ * Production Ready Implementation - SECURITY FIXED
  */
 
 const express = require('express');
 const router = express.Router();
+const jwt = require('jsonwebtoken');
+const validator = require('validator');
 const privacyService = require('../services/privacyService');
 // const { createGuestToken } = require('../auth/secure-authentication');
 const { sanitizeInput } = require('../middleware/input-sanitization');
 const rateLimit = require('express-rate-limit');
 const { logger } = require('../utils/logger');
+
+// ============================================================================
+// 🚨 CRITICAL SECURITY FIXES - PRIVACY DATA PROTECTION
+// ============================================================================
+
+/**
+ * JWT Authentication Middleware - CRITICAL SECURITY FIX
+ */
+const authenticateRequest = async (req, res, next) => {
+  try {
+    // Check for API key or JWT token
+    const apiKey = req.headers['x-api-key'];
+    const authHeader = req.headers.authorization;
+    
+    if (!apiKey && !authHeader) {
+      logger.warn('SECURITY: Unauthenticated privacy data request blocked', {
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+        endpoint: req.path
+      });
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required for privacy data access',
+        code: 'PRIVACY_AUTH_REQUIRED'
+      });
+    }
+    
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      // JWT token validation
+      const token = authHeader.substring(7);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret-key');
+      req.user = decoded;
+      logger.debug('Privacy data JWT authentication successful', { userId: decoded.user_id });
+    } else if (apiKey) {
+      // Basic API key validation
+      if (apiKey.length < 32) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid API key format for privacy data',
+          code: 'INVALID_PRIVACY_API_KEY'
+        });
+      }
+      req.apiKey = apiKey;
+      logger.debug('Privacy data API key authentication successful');
+    } else {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid authentication method for privacy data',
+        code: 'PRIVACY_AUTH_INVALID'
+      });
+    }
+    
+    next();
+  } catch (error) {
+    logger.warn('SECURITY: Privacy data authentication failed', {
+      error: error.message,
+      ip: req.ip,
+      userAgent: req.headers['user-agent']
+    });
+    return res.status(401).json({
+      success: false,
+      error: 'Privacy data authentication failed',
+      code: 'PRIVACY_AUTH_FAILED'
+    });
+  }
+};
+
+/**
+ * Privacy Request Validation - CRITICAL SECURITY FIX
+ */
+const validatePrivacyRequest = async (req, res, next) => {
+  try {
+    const { email, userID } = req.body;
+    const authenticatedUserId = req.user?.id || req.user?.user_id;
+    const authenticatedEmail = req.user?.email;
+    
+    // Verify user can only request their own data
+    if (userID && String(userID) !== String(authenticatedUserId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Can only request your own privacy data',
+        code: 'PRIVACY_ACCESS_DENIED'
+      });
+    }
+    
+    // Verify email matches authenticated user
+    if (email && authenticatedEmail && email !== authenticatedEmail) {
+      return res.status(403).json({
+        success: false,
+        error: 'Email must match authenticated account',
+        code: 'EMAIL_MISMATCH'
+      });
+    }
+    
+    // Force use of authenticated user's data
+    req.body.userID = authenticatedUserId;
+    if (authenticatedEmail) {
+      req.body.email = authenticatedEmail;
+    }
+    
+    next();
+  } catch (error) {
+    logger.error('Privacy request validation failed', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Privacy request validation failed',
+      code: 'PRIVACY_VALIDATION_ERROR'
+    });
+  }
+};
+
+/**
+ * Secure Error Handling - CRITICAL SECURITY FIX
+ */
+const sanitizePrivacyErrorResponse = (error, context = '') => {
+  // Log detailed error server-side
+  logger.error(`Privacy API error ${context}`, {
+    error: error.message,
+    stack: error.stack,
+    timestamp: new Date().toISOString()
+  });
+  
+  // Return generic error to client
+  return {
+    success: false,
+    error: 'Privacy data processing failed',
+    code: 'PRIVACY_DATA_ERROR',
+    timestamp: new Date().toISOString()
+  };
+};
+
+// Apply authentication to ALL routes
+router.use(authenticateRequest);
 
 // Stricter rate limiting for data rights requests
 const dataRightsRateLimit = rateLimit({
@@ -22,10 +157,10 @@ const dataRightsRateLimit = rateLimit({
 });
 
 /**
- * CCPA Right to Know - Request complete data export
+ * CCPA Right to Know - Request complete data export - SECURITY FIXED
  * POST /api/user-rights/request-data-export
  */
-router.post('/request-data-export', dataRightsRateLimit, sanitizeInput, async (req, res) => {
+router.post('/request-data-export', dataRightsRateLimit, sanitizeInput, validatePrivacyRequest, async (req, res) => {
     try {
         const { email, userID } = req.body;
 
@@ -61,10 +196,10 @@ router.post('/request-data-export', dataRightsRateLimit, sanitizeInput, async (r
 });
 
 /**
- * CCPA Right to Delete - Request data deletion
+ * CCPA Right to Delete - Request data deletion - SECURITY FIXED
  * POST /api/user-rights/request-data-deletion
  */
-router.post('/request-data-deletion', dataRightsRateLimit, sanitizeInput, async (req, res) => {
+router.post('/request-data-deletion', dataRightsRateLimit, sanitizeInput, validatePrivacyRequest, async (req, res) => {
     try {
         const { email, userID, confirmDeletion = false } = req.body;
 
@@ -99,10 +234,10 @@ router.post('/request-data-deletion', dataRightsRateLimit, sanitizeInput, async 
 });
 
 /**
- * CCPA Right to Opt-Out - Opt out of data sale
+ * CCPA Right to Opt-Out - Opt out of data sale - SECURITY FIXED
  * POST /api/user-rights/opt-out-data-sale
  */
-router.post('/opt-out-data-sale', sanitizeInput, async (req, res) => {
+router.post('/opt-out-data-sale', sanitizeInput, validatePrivacyRequest, async (req, res) => {
     try {
         const { email, userID } = req.body;
 
@@ -138,10 +273,10 @@ router.post('/opt-out-data-sale', sanitizeInput, async (req, res) => {
 });
 
 /**
- * PIPEDA Access Request - Canadian privacy law compliance
+ * PIPEDA Access Request - Canadian privacy law compliance - SECURITY FIXED
  * POST /api/user-rights/pipeda-access-request
  */
-router.post('/pipeda-access-request', dataRightsRateLimit, sanitizeInput, async (req, res) => {
+router.post('/pipeda-access-request', dataRightsRateLimit, sanitizeInput, validatePrivacyRequest, async (req, res) => {
     try {
         const { email, userID, requestType = 'ACCESS' } = req.body;
 

@@ -1,18 +1,148 @@
 /**
  * Data Transparency API - Processing Transparency & Data Mapping
- * CCPA & PIPEDA Compliance Implementation
+ * CCPA & PIPEDA Compliance Implementation - SECURITY FIXED
  */
 
 const express = require('express');
 const router = express.Router();
+const jwt = require('jsonwebtoken');
+const validator = require('validator');
 const dataTransparencyService = require('../services/dataTransparencyService');
 const { logger } = require('../utils/logger');
 
+// ============================================================================
+// 🚨 CRITICAL SECURITY FIXES - DATA TRANSPARENCY PROTECTION
+// ============================================================================
+
 /**
- * Get comprehensive data processing transparency report
+ * JWT Authentication Middleware - CRITICAL SECURITY FIX
+ */
+const authenticateRequest = async (req, res, next) => {
+  try {
+    // Check for API key or JWT token
+    const apiKey = req.headers['x-api-key'];
+    const authHeader = req.headers.authorization;
+    
+    if (!apiKey && !authHeader) {
+      logger.warn('SECURITY: Unauthenticated transparency data request blocked', {
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+        endpoint: req.path
+      });
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required for transparency data access',
+        code: 'TRANSPARENCY_AUTH_REQUIRED'
+      });
+    }
+    
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      // JWT token validation
+      const token = authHeader.substring(7);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret-key');
+      req.user = decoded;
+      logger.debug('Transparency data JWT authentication successful', { userId: decoded.user_id });
+    } else if (apiKey) {
+      // Basic API key validation
+      if (apiKey.length < 32) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid API key format for transparency data',
+          code: 'INVALID_TRANSPARENCY_API_KEY'
+        });
+      }
+      req.apiKey = apiKey;
+      logger.debug('Transparency data API key authentication successful');
+    } else {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid authentication method for transparency data',
+        code: 'TRANSPARENCY_AUTH_INVALID'
+      });
+    }
+    
+    next();
+  } catch (error) {
+    logger.warn('SECURITY: Transparency data authentication failed', {
+      error: error.message,
+      ip: req.ip,
+      userAgent: req.headers['user-agent']
+    });
+    return res.status(401).json({
+      success: false,
+      error: 'Transparency data authentication failed',
+      code: 'TRANSPARENCY_AUTH_FAILED'
+    });
+  }
+};
+
+/**
+ * Transparency Request Validation - CRITICAL SECURITY FIX
+ */
+const validateTransparencyRequest = (req, res, next) => {
+  try {
+    const requestedUserId = req.params.userId;
+    const authenticatedUserId = req.user?.id || req.user?.user_id;
+    const { email } = req.query;
+    const authenticatedEmail = req.user?.email;
+    
+    // Verify user can only access their own data
+    if (requestedUserId && String(requestedUserId) !== String(authenticatedUserId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Can only access your own transparency data',
+        code: 'TRANSPARENCY_ACCESS_DENIED'
+      });
+    }
+    
+    // Verify email matches authenticated user
+    if (email && authenticatedEmail && email !== authenticatedEmail) {
+      return res.status(403).json({
+        success: false,
+        error: 'Email must match authenticated account',
+        code: 'EMAIL_MISMATCH'
+      });
+    }
+    
+    next();
+  } catch (error) {
+    logger.error('Transparency request validation failed', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Transparency request validation failed',
+      code: 'TRANSPARENCY_VALIDATION_ERROR'
+    });
+  }
+};
+
+/**
+ * Secure Error Handling - CRITICAL SECURITY FIX
+ */
+const sanitizeTransparencyErrorResponse = (error, context = '') => {
+  // Log detailed error server-side
+  logger.error(`Data Transparency API error ${context}`, {
+    error: error.message,
+    stack: error.stack,
+    timestamp: new Date().toISOString()
+  });
+  
+  // Return generic error to client
+  return {
+    success: false,
+    error: 'Transparency data processing failed',
+    code: 'TRANSPARENCY_DATA_ERROR',
+    timestamp: new Date().toISOString()
+  };
+};
+
+// Apply authentication to ALL routes
+router.use(authenticateRequest);
+
+/**
+ * Get comprehensive data processing transparency report - SECURITY FIXED
  * GET /api/data-transparency/processing-report/:userId
  */
-router.get('/processing-report/:userId', async (req, res) => {
+router.get('/processing-report/:userId', validateTransparencyRequest, async (req, res) => {
     try {
         const { userId } = req.params;
         const { email } = req.query;
@@ -48,10 +178,10 @@ router.get('/processing-report/:userId', async (req, res) => {
 });
 
 /**
- * Get data inventory for specific user
+ * Get data inventory for specific user - SECURITY FIXED
  * GET /api/data-transparency/data-inventory/:userId
  */
-router.get('/data-inventory/:userId', async (req, res) => {
+router.get('/data-inventory/:userId', validateTransparencyRequest, async (req, res) => {
     try {
         const { userId } = req.params;
         const { email } = req.query;

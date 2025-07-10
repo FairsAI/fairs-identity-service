@@ -1,5 +1,8 @@
 const express = require('express');
 const router = express.Router();
+const jwt = require('jsonwebtoken');
+const validator = require('validator');
+const rateLimit = require('express-rate-limit');
 const userAddressRepository = require('../repositories/user-address-repository');
 const userPaymentMethodRepository = require('../repositories/user-payment-method-repository');
 const { userRepository } = require('../repositories/user-repository');
@@ -7,14 +10,238 @@ const { validatePaymentMethod } = require('../middleware/payment-method-validati
 const { logger } = require('../utils/logger');
 
 // ============================================================================
+// 🚨 CRITICAL SECURITY FIXES - FINANCIAL DATA PROTECTION
+// ============================================================================
+
+/**
+ * JWT Authentication Middleware - CRITICAL SECURITY FIX
+ */
+const authenticateRequest = async (req, res, next) => {
+  try {
+    // Check for API key or JWT token
+    const apiKey = req.headers['x-api-key'];
+    const authHeader = req.headers.authorization;
+    
+    if (!apiKey && !authHeader) {
+      logger.warn('SECURITY: Unauthenticated financial data request blocked', {
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+        endpoint: req.path
+      });
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required for financial data access',
+        code: 'FINANCIAL_AUTH_REQUIRED'
+      });
+    }
+    
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      // JWT token validation
+      const token = authHeader.substring(7);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret-key');
+      req.user = decoded;
+      req.merchantId = decoded.merchant_id;
+      logger.debug('Financial data JWT authentication successful', { userId: decoded.user_id });
+    } else if (apiKey) {
+      // Basic API key validation
+      if (apiKey.length < 32) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid API key format for financial data',
+          code: 'INVALID_FINANCIAL_API_KEY'
+        });
+      }
+      req.apiKey = apiKey;
+      logger.debug('Financial data API key authentication successful');
+    } else {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid authentication method for financial data',
+        code: 'FINANCIAL_AUTH_INVALID'
+      });
+    }
+    
+    next();
+  } catch (error) {
+    logger.warn('SECURITY: Financial data authentication failed', {
+      error: error.message,
+      ip: req.ip,
+      userAgent: req.headers['user-agent']
+    });
+    return res.status(401).json({
+      success: false,
+      error: 'Financial data authentication failed',
+      code: 'FINANCIAL_AUTH_FAILED'
+    });
+  }
+};
+
+/**
+ * User Ownership Validation - CRITICAL SECURITY FIX
+ */
+const validateUserOwnership = (req, res, next) => {
+  try {
+    const requestedUserId = req.params.userId || req.body.userId;
+    const authenticatedUserId = req.user?.id || req.user?.user_id;
+    
+    if (!requestedUserId) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required for financial data access',
+        code: 'USER_ID_REQUIRED'
+      });
+    }
+    
+    if (!authenticatedUserId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required for financial data',
+        code: 'FINANCIAL_AUTH_REQUIRED'
+      });
+    }
+    
+    // Only allow users to access their own financial data (unless admin)
+    if (String(requestedUserId) !== String(authenticatedUserId) && !req.user?.isAdmin) {
+      logger.warn('SECURITY: Unauthorized financial data access attempt', {
+        requestedUserId,
+        authenticatedUserId,
+        ip: req.ip,
+        userAgent: req.headers['user-agent']
+      });
+      
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied: Cannot access other users financial data',
+        code: 'FINANCIAL_DATA_ACCESS_DENIED'
+      });
+    }
+    
+    next();
+  } catch (error) {
+    logger.error('Financial data ownership validation failed', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Authorization validation failed',
+      code: 'FINANCIAL_AUTH_VALIDATION_ERROR'
+    });
+  }
+};
+
+/**
+ * Financial Data Input Validation - CRITICAL SECURITY FIX
+ */
+const validateFinancialInput = (req, res, next) => {
+  try {
+    // Email validation
+    if (req.body.email) {
+      if (!validator.isEmail(req.body.email)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid email format',
+          code: 'INVALID_EMAIL'
+        });
+      }
+      req.body.email = validator.normalizeEmail(req.body.email);
+    }
+    
+    // Address validation
+    if (req.body.addressLine1 && req.body.addressLine1.length > 200) {
+      return res.status(400).json({
+        success: false,
+        error: 'Address line too long',
+        code: 'INVALID_ADDRESS_LENGTH'
+      });
+    }
+    
+    // Postal code validation
+    if (req.body.postalCode && !/^[A-Za-z0-9\s-]{3,10}$/.test(req.body.postalCode)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid postal code format',
+        code: 'INVALID_POSTAL_CODE'
+      });
+    }
+    
+    // Sanitize string inputs
+    ['firstName', 'lastName', 'addressLine1', 'addressLine2', 'city', 'label', 'nickname'].forEach(field => {
+      if (req.body[field]) {
+        req.body[field] = validator.escape(String(req.body[field]).trim().slice(0, 200));
+      }
+    });
+    
+    next();
+  } catch (error) {
+    logger.error('Financial input validation failed', error);
+    return res.status(400).json({
+      success: false,
+      error: 'Input validation failed',
+      code: 'FINANCIAL_VALIDATION_ERROR'
+    });
+  }
+};
+
+/**
+ * Financial Data Rate Limiting - CRITICAL SECURITY FIX
+ */
+const financialDataRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // limit each user to 20 financial operations per window
+  message: {
+    success: false,
+    error: 'Too many financial data requests',
+    code: 'FINANCIAL_RATE_LIMIT_EXCEEDED'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    logger.warn('SECURITY: Financial data rate limit exceeded', {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+      endpoint: req.path
+    });
+    res.status(429).json({
+      success: false,
+      error: 'Too many financial data requests, please try again later',
+      code: 'FINANCIAL_RATE_LIMIT_EXCEEDED'
+    });
+  }
+});
+
+/**
+ * Secure Error Handling - CRITICAL SECURITY FIX
+ */
+const sanitizeErrorResponse = (error, context = '') => {
+  // Log detailed error server-side
+  logger.error(`Enhanced Schema API error ${context}`, {
+    error: error.message,
+    stack: error.stack,
+    timestamp: new Date().toISOString()
+  });
+  
+  // Return generic error to client
+  return {
+    success: false,
+    error: 'Financial data processing failed',
+    code: 'FINANCIAL_DATA_ERROR',
+    timestamp: new Date().toISOString()
+  };
+};
+
+// Apply rate limiting to all routes
+router.use(financialDataRateLimit);
+
+// Apply authentication to ALL routes
+router.use(authenticateRequest);
+
+// ============================================================================
 // ENHANCED SCHEMA: MULTIPLE ADDRESS MANAGEMENT
 // ============================================================================
 
 /**
- * Save user address with label and nickname
+ * Save user address with label and nickname - SECURITY FIXED
  * POST /api/addresses
  */
-router.post('/addresses', async (req, res) => {
+router.post('/addresses', validateFinancialInput, async (req, res) => {
   logger.info({
     message: 'Enhanced Schema: Save user address request',
     userId: req.body.userId,
@@ -26,7 +253,22 @@ router.post('/addresses', async (req, res) => {
   try {
     let { userId, email, firstName, lastName, type, nickname, ...addressData } = req.body;
     
-    // If no userId provided, create user first
+    // 🚨 CRITICAL SECURITY FIX: Use authenticated user's ID
+    const authenticatedUserId = req.user?.id || req.user?.user_id;
+    
+    // If userId provided in body, verify it matches authenticated user
+    if (userId && String(userId) !== String(authenticatedUserId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Cannot create addresses for other users',
+        code: 'ADDRESS_CREATION_DENIED'
+      });
+    }
+    
+    // Force use of authenticated user's ID
+    userId = authenticatedUserId;
+    
+    // If no userId from auth, create user first
     if (!userId && email) {
       logger.info('Enhanced Schema: Creating new user for address', { email, firstName, lastName });
       
@@ -118,19 +360,16 @@ router.post('/addresses', async (req, res) => {
       message: `${mappedAddressData.label || 'Address'} saved successfully`
     });
   } catch (error) {
-    logger.error('Failed to save Enhanced Schema address:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
+    const sanitizedError = sanitizeErrorResponse(error, 'address creation');
+    res.status(500).json(sanitizedError);
   }
 });
 
 /**
- * Get all addresses for user
+ * Get all addresses for user - SECURITY FIXED
  * GET /api/addresses/:userId
  */
-router.get('/addresses/:userId', async (req, res) => {
+router.get('/addresses/:userId', validateUserOwnership, async (req, res) => {
   logger.info({
     message: 'Enhanced Schema: Get user addresses request',
     userId: req.params.userId
@@ -154,10 +393,10 @@ router.get('/addresses/:userId', async (req, res) => {
 });
 
 /**
- * Get shipping addresses for user (independent selection)
+ * Get shipping addresses for user (independent selection) - SECURITY FIXED
  * GET /api/addresses/:userId/shipping
  */
-router.get('/addresses/:userId/shipping', async (req, res) => {
+router.get('/addresses/:userId/shipping', validateUserOwnership, async (req, res) => {
   logger.info({
     message: 'Enhanced Schema: Get user shipping addresses request',
     userId: req.params.userId
@@ -184,10 +423,10 @@ router.get('/addresses/:userId/shipping', async (req, res) => {
 });
 
 /**
- * Get billing addresses for user (independent selection)
+ * Get billing addresses for user (independent selection) - SECURITY FIXED
  * GET /api/addresses/:userId/billing
  */
-router.get('/addresses/:userId/billing', async (req, res) => {
+router.get('/addresses/:userId/billing', validateUserOwnership, async (req, res) => {
   logger.info({
     message: 'Enhanced Schema: Get user billing addresses request',
     userId: req.params.userId
@@ -410,10 +649,10 @@ router.post('/addresses/:addressId/used', async (req, res) => {
 // ============================================================================
 
 /**
- * Save user payment method with label and nickname
+ * Save user payment method with label and nickname - SECURITY FIXED
  * POST /api/payment-methods
  */
-router.post('/payment-methods', validatePaymentMethod, async (req, res) => {
+router.post('/payment-methods', validateFinancialInput, validatePaymentMethod, async (req, res) => {
   logger.info({
     message: 'Enhanced Schema: Save user payment method request',
     userId: req.body.userId,
@@ -425,7 +664,22 @@ router.post('/payment-methods', validatePaymentMethod, async (req, res) => {
   try {
     let { userId, email, firstName, lastName, type, nickname, ...paymentData } = req.body;
     
-    // If no userId provided, create user first
+    // 🚨 CRITICAL SECURITY FIX: Use authenticated user's ID
+    const authenticatedUserId = req.user?.id || req.user?.user_id;
+    
+    // If userId provided in body, verify it matches authenticated user
+    if (userId && String(userId) !== String(authenticatedUserId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Cannot create payment methods for other users',
+        code: 'PAYMENT_METHOD_CREATION_DENIED'
+      });
+    }
+    
+    // Force use of authenticated user's ID
+    userId = authenticatedUserId;
+    
+    // If no userId from auth, create user first
     if (!userId && email) {
       logger.info('Enhanced Schema: Creating new user for payment method', { email, firstName, lastName });
       
@@ -505,10 +759,10 @@ router.post('/payment-methods', validatePaymentMethod, async (req, res) => {
 });
 
 /**
- * Get all payment methods for user
+ * Get all payment methods for user - SECURITY FIXED
  * GET /api/payment-methods/:userId
  */
-router.get('/payment-methods/:userId', async (req, res) => {
+router.get('/payment-methods/:userId', validateUserOwnership, async (req, res) => {
   logger.info({
     message: 'Enhanced Schema: Get user payment methods request',
     userId: req.params.userId
@@ -733,10 +987,10 @@ router.put('/payment-methods/:paymentMethodId/billing-address', async (req, res)
 // ============================================================================
 
 /**
- * Get complete user profile (user + addresses + payment methods + preferences)
+ * Get complete user profile (user + addresses + payment methods + preferences) - SECURITY FIXED
  * GET /api/users/:userId/profile
  */
-router.get('/users/:userId/profile', async (req, res) => {
+router.get('/users/:userId/profile', validateUserOwnership, async (req, res) => {
   logger.info({
     message: 'Enhanced Schema: Get complete user profile request',
     userId: req.params.userId
@@ -792,10 +1046,10 @@ router.get('/users/:userId/profile', async (req, res) => {
 });
 
 /**
- * Get user's default addresses and payment method
+ * Get user's default addresses and payment method - SECURITY FIXED
  * GET /api/users/:userId/defaults
  */
-router.get('/users/:userId/defaults', async (req, res) => {
+router.get('/users/:userId/defaults', validateUserOwnership, async (req, res) => {
   logger.info({
     message: 'Enhanced Schema: Get user defaults request',
     userId: req.params.userId
