@@ -32,6 +32,7 @@ const { deviceFingerprintRepository } = require('../database/device-fingerprint-
 const { crossMerchantIdentityRepository } = require('../database/cross-merchant-identity-repository');
 const { verificationRepository } = require('../database/verification-repository');
 const { userRepository } = require('../repositories/user-repository');
+const { authService } = require('../auth/secure-authentication');
 const { logger } = require('../utils/logger');
 const { identityService } = require('../services/identity-service');
 const { dbConnection } = require('../database/db-connection');
@@ -77,8 +78,8 @@ const authenticateRequest = async (req, res, next) => {
       const token = authHeader.substring(7);
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret-key');
       req.user = decoded;
-      req.merchantId = decoded.merchant_id;
-      logger.debug('JWT authentication successful', { userId: decoded.user_id, merchantId: decoded.merchant_id });
+      req.merchantId = decoded.merchantId; // Use camelCase to match authService
+      logger.debug('JWT authentication successful', { userId: decoded.userId, merchantId: decoded.merchantId });
     } else if (apiKey) {
       // Basic API key validation - enhance as needed
       if (apiKey.length < 32) {
@@ -89,7 +90,11 @@ const authenticateRequest = async (req, res, next) => {
         });
       }
       req.apiKey = apiKey;
-      logger.debug('API key authentication successful');
+      
+      // Extract merchant ID from header for API key authentication
+      req.merchantId = req.headers['x-fairs-merchant'];
+      
+      logger.debug('API key authentication successful', { merchantId: req.merchantId });
     } else {
       return res.status(401).json({
         success: false,
@@ -493,6 +498,72 @@ router.get('/users/:userId', authenticateRequest, validateAndSanitizeInput, asyn
   } catch (error) {
     const sanitizedError = sanitizeErrorResponse(error, 'get user by ID');
     res.status(500).json(sanitizedError);
+  }
+});
+
+/**
+ * Generate JWT token for existing user - TEMPORARY SOLUTION
+ * POST /api/auth/token
+ */
+router.post('/auth/token', authenticateRequest, validateAndSanitizeInput, async (req, res) => {
+  try {
+    const { userId, email, merchantId } = req.body;
+    
+    if (!userId && !email) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID or email is required'
+      });
+    }
+    
+    let user = null;
+    
+    // Find user by ID or email
+    if (userId) {
+      user = await userRepository.getUserById(userId);
+    } else if (email) {
+      user = await userRepository.getUserByEmail(email);
+    }
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    // Generate JWT token using AuthService
+    const token = authService.generateToken({
+      userId: user.id,
+      username: user.email,
+      merchantId: merchantId || req.merchantId || 'lv-demo-merchant',
+      permissions: ['user:read', 'financial:read']
+    });
+    
+    logger.info('JWT token generated for user', { 
+      userId: user.id, 
+      email: user.email,
+      merchantId: merchantId || req.merchantId
+    });
+    
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name
+      },
+      expiresIn: 24 * 60 * 60 // 24 hours
+    });
+    
+  } catch (error) {
+    logger.error('JWT token generation failed:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Token generation failed'
+    });
   }
 });
 

@@ -40,8 +40,8 @@ const authenticateRequest = async (req, res, next) => {
       const token = authHeader.substring(7);
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret-key');
       req.user = decoded;
-      req.merchantId = decoded.merchant_id;
-      logger.debug('Financial data JWT authentication successful', { userId: decoded.user_id });
+      req.merchantId = decoded.merchantId; // Use camelCase to match authService
+      logger.debug('Financial data JWT authentication successful', { userId: decoded.userId });
     } else if (apiKey) {
       // Basic API key validation
       if (apiKey.length < 32) {
@@ -82,7 +82,7 @@ const authenticateRequest = async (req, res, next) => {
 const validateUserOwnership = (req, res, next) => {
   try {
     const requestedUserId = req.params.userId || req.body.userId;
-    const authenticatedUserId = req.user?.id || req.user?.user_id;
+    const authenticatedUserId = req.user?.userId; // Use camelCase to match authService
     
     if (!requestedUserId) {
       return res.status(400).json({
