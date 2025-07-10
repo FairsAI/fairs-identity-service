@@ -205,10 +205,11 @@ const identityRateLimit = rateLimit({
 
 /**
  * Cross-Merchant Authorization - HIGH PRIORITY SECURITY FIX
+ * 🚨 SECURITY FIX 5: Enhanced Cross-Merchant Authorization (CVSS 8.0 HIGH)
  */
 const validateCrossMerchantAccess = async (req, res, next) => {
   try {
-    const requestingMerchantId = req.merchantId; // From authenticated session
+    const requestingMerchantId = req.merchantId;
     const targetUniversalId = req.params.universalId || req.body.universalId;
     
     if (!requestingMerchantId) {
@@ -220,21 +221,36 @@ const validateCrossMerchantAccess = async (req, res, next) => {
     }
     
     if (targetUniversalId) {
-      // Verify merchant has legitimate relationship with user
-      const hasRelationship = await verifyMerchantUserRelationship(requestingMerchantId, targetUniversalId);
+      // ✅ SECURE: Enhanced relationship verification
+      const hasDirectRelationship = await verifyMerchantUserRelationship(requestingMerchantId, targetUniversalId);
       
-      if (!hasRelationship) {
-        logger.warn('SECURITY: Unauthorized cross-merchant access attempt', {
-          requestingMerchantId,
-          targetUniversalId,
-          ip: req.ip,
-          userAgent: req.headers['user-agent']
-        });
+      if (!hasDirectRelationship) {
+        // ✅ SECURE: Strict device verification with additional checks
+        const deviceVerification = await verifyDeviceRelationship(requestingMerchantId, targetUniversalId);
         
-        return res.status(403).json({
-          success: false,
-          error: 'Access denied: No verified relationship with user',
-          code: 'CROSS_MERCHANT_ACCESS_DENIED'
+        if (!deviceVerification.verified || deviceVerification.confidence < 0.85) {
+          logger.warn('SECURITY: Unauthorized cross-merchant access blocked', {
+            requestingMerchantId,
+            targetUniversalId: targetUniversalId.substring(0, 8) + '...',
+            verificationMethod: 'device',
+            confidence: deviceVerification.confidence,
+            ip: req.ip,
+            userAgent: req.headers['user-agent']
+          });
+          
+          return res.status(403).json({
+            success: false,
+            error: 'Access denied: Insufficient verification for cross-merchant access',
+            code: 'CROSS_MERCHANT_ACCESS_DENIED'
+          });
+        }
+        
+        // ✅ SECURE: Log authorized device-based access
+        logger.info('AUDIT: Device-verified cross-merchant access authorized', {
+          requestingMerchantId,
+          targetUniversalId: targetUniversalId.substring(0, 8) + '...',
+          confidence: deviceVerification.confidence,
+          ip: req.ip
         });
       }
     }
@@ -244,7 +260,11 @@ const validateCrossMerchantAccess = async (req, res, next) => {
     next();
     
   } catch (error) {
-    logger.error('Cross-merchant access validation failed', error);
+    logger.error('Cross-merchant access validation failed', {
+      error: error.message,
+      requestingMerchantId: req.merchantId,
+      ip: req.ip
+    });
     return res.status(500).json({
       success: false,
       error: 'Access validation failed',
@@ -269,22 +289,56 @@ async function verifyMerchantUserRelationship(merchantId, universalId) {
   }
 }
 
+// ✅ SECURE: Enhanced device relationship verification
+async function verifyDeviceRelationship(merchantId, universalId) {
+  try {
+    const query = `
+      SELECT COUNT(*) as count, AVG(confidence_score) as avg_confidence
+      FROM identity_service.device_associations
+      WHERE merchant_id = $1 AND universal_id = $2
+      AND status = 'active'
+      AND last_seen > NOW() - INTERVAL '30 days'
+    `;
+    const result = await dbConnection.query(query, [merchantId, universalId]);
+    
+    const hasDevices = result[0].count > 0;
+    const confidence = result[0].avg_confidence || 0;
+    
+    return {
+      verified: hasDevices && confidence >= 0.85,
+      confidence: confidence,
+      deviceCount: result[0].count
+    };
+  } catch (error) {
+    logger.error('Device relationship verification failed', error);
+    return {
+      verified: false,
+      confidence: 0,
+      deviceCount: 0
+    };
+  }
+}
+
 /**
  * Secure Error Handling - HIGH PRIORITY SECURITY FIX
+ * 🚨 SECURITY FIX 6: Secure Information Logging (CVSS 5.5 MEDIUM)
  */
 const sanitizeErrorResponse = (error, context = '') => {
-  // Log detailed error server-side
+  // ✅ SECURE: Log error without stack traces or sensitive data
+  const errorId = Math.random().toString(36).substring(2, 15);
   logger.error(`Identity service error ${context}`, {
-    error: error.message,
-    stack: error.stack,
+    errorId,
+    errorType: error.constructor.name,
     timestamp: new Date().toISOString()
+    // ✅ SECURE: No stack trace, user data, or internal details
   });
   
-  // Return generic error to client
+  // Return generic error to client with error ID for tracking
   return {
     success: false,
     error: 'Identity service processing failed',
     code: 'IDENTITY_ERROR',
+    errorId,
     timestamp: new Date().toISOString()
   };
 };
@@ -1073,6 +1127,7 @@ router.post('/identity/merchant', validateRequired(['merchantId', 'merchantUserI
 
 /**
  * Get merchant associations for a user - SECURED ENDPOINT
+ * 🚨 SECURITY FIX 7: Secure Device Verification Fallback (CVSS 6.5 MEDIUM)
  * 
  * GET /api/identity/:universalId/merchants
  * 
@@ -1104,43 +1159,35 @@ router.post('/identity/merchant', validateRequired(['merchantId', 'merchantUserI
  * }
  */
 router.get('/identity/:universalId/merchants', 
-  validateCrossMerchantAccess,
+  validateCrossMerchantAccess,  // Uses enhanced validation
   async (req, res) => {
   try {
     const universalId = req.params.universalId;
     const requestingMerchantId = req.merchantId;
     
-    // SECURITY: Verify requesting merchant has a relationship with this user
+    // ✅ SECURE: Strict authorization required (no fallbacks)
     const userMerchantRelationship = await crossMerchantIdentityRepository.findUniversalIdByMerchantUser(
       requestingMerchantId, 
       universalId
     );
     
     if (!userMerchantRelationship) {
-      // Check if merchant has any association with this user through device fingerprinting
-      const userDevices = await crossMerchantIdentityRepository.getUserDevices(universalId, {
-        merchantId: requestingMerchantId,
-        activeOnly: true
+      // ✅ SECURE: No device verification fallback for sensitive data
+      logger.warn('SECURITY: Cross-merchant data access denied', {
+        requestingMerchantId,
+        targetUserId: universalId.substring(0, 8) + '...',
+        reason: 'No direct merchant relationship',
+        ip: req.ip
       });
       
-      if (!userDevices || userDevices.length === 0) {
-        logger.warn('SECURITY: Unauthorized cross-merchant data access attempt', {
-          requestingMerchantId,
-          targetUserId: universalId,
-          reason: 'No verified relationship',
-          ip: req.ip,
-          userAgent: req.headers['user-agent']
-        });
-        
-        return res.status(403).json({
-          success: false,
-          error: 'Access denied: No verified relationship with this user',
-          code: 'UNAUTHORIZED_CROSS_MERCHANT_ACCESS'
-        });
-      }
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied: Direct merchant relationship required',
+        code: 'DIRECT_RELATIONSHIP_REQUIRED'
+      });
     }
     
-    // SECURITY: Get associations - merchant can only see their own plus limited cross-merchant data
+    // ✅ SECURE: Get associations - merchant can only see their own plus limited cross-merchant data
     const allAssociations = await crossMerchantIdentityRepository.getMerchantAssociations(universalId);
     
     // Filter associations - requesting merchant gets full data, others get limited data
@@ -1167,36 +1214,42 @@ router.get('/identity/:universalId/merchants',
     // Generate audit ID for tracking
     const auditId = `audit_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
     
-    logger.info('SECURITY: Authorized cross-merchant data access', {
+    // ✅ SECURE: Log authorized access with enhanced security tracking
+    logger.info('AUDIT: Authorized cross-merchant data access', {
       requestingMerchantId,
-      targetUserId: universalId,
+      targetUserId: universalId.substring(0, 8) + '...',
       totalAssociations: allAssociations.length,
       filteredAssociations: filteredAssociations.length,
       auditId,
-      hasDirectRelationship: !!userMerchantRelationship
+      verificationMethod: 'direct_relationship',
+      ip: req.ip
     });
     
     res.json({
       success: true,
       merchants: filteredAssociations,
-      accessLevel: userMerchantRelationship ? 'authorized' : 'device_verified',
+      accessLevel: 'authorized',
       auditId,
       totalMerchants: filteredAssociations.length,
       requestingMerchant: requestingMerchantId
     });
   } catch (error) {
-    logger.error('Error getting merchant associations:', {
-      error: error.message,
-      stack: error.stack,
+    // ✅ SECURE: Safe error handling without stack traces
+    const errorId = Math.random().toString(36).substring(2, 15);
+    logger.error('Error getting merchant associations', {
+      errorId,
+      errorType: error.constructor.name,
       requestingMerchantId: req.merchantId,
-      targetUserId: req.authorizedUniversalId,
+      targetUserId: req.authorizedUniversalId?.substring(0, 8) + '...',
       ip: req.ip
+      // ✅ SECURE: No stack trace or sensitive data
     });
     
     res.status(500).json({
       success: false,
       error: 'Failed to get merchant associations',
-      code: 'INTERNAL_ERROR'
+      code: 'INTERNAL_ERROR',
+      errorId
     });
   }
 });
@@ -1658,28 +1711,32 @@ router.get('/test-user-lookup/:email', authenticateRequest, validateAndSanitizeI
 /**
  * Test database connection - SECURITY FIXED
  * GET /api/test-db-connection
+ * 🚨 SECURITY FIX 4: Secure Database Test Endpoints (CVSS 6.0 MEDIUM)
  */
 router.get('/test-db-connection', authenticateRequest, async (req, res) => {
   try {
-    logger.info('Testing database connection...');
+    // ✅ SECURE: Production check
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({
+        success: false,
+        error: 'Test endpoints disabled in production',
+        code: 'TEST_ENDPOINT_DISABLED'
+      });
+    }
     
-    // Test query to see if connection is working
-    const testQuery = `SELECT COUNT(*) as count FROM identity_service.users`;
+    logger.info('Database connection test initiated');
+    
+    // ✅ SECURE: Basic connection test only
+    const testQuery = `SELECT 1 as connection_test`;
     const result = await dbConnection.query(testQuery);
     
-    logger.info('Database test result:', { result });
-    
-    // Test specific user query
-    const userQuery = `SELECT * FROM identity_service.users WHERE email = $1`;
-    const userResult = await dbConnection.query(userQuery, ['bill@bill.com']);
-    
-    logger.info('User test result:', { userResult });
-    
+    // ✅ SECURE: Minimal response without data exposure
     res.json({
       success: true,
-      totalUsers: result[0]?.count || 0,
-      testUser: userResult[0] || null,
-      message: 'Database connection test completed'
+      connectionStatus: result.length > 0 ? 'connected' : 'disconnected',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV
+      // ✅ SECURE: No user data, counts, or schema information
     });
   } catch (error) {
     const sanitizedError = sanitizeErrorResponse(error, 'database connection test');

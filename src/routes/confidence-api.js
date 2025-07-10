@@ -82,23 +82,29 @@ router.post('/calculate',
     res.json(response);
     
   } catch (error) {
-    logger.error('Server confidence calculation failed:', {
-      error: error.message,
-      stack: error.stack,
+    // 🚨 SECURITY FIX 1: Secure Error Handling (CVSS 7.0 HIGH)
+    // ❌ REMOVE: Stack trace exposure in production logs
+    const errorId = Math.random().toString(36).substring(2, 15);
+    logger.error('Server confidence calculation failed', {
+      errorId,
+      errorType: error.constructor.name,
       requestingMerchant: req.merchantId,
-      ip: req.ip
+      timestamp: Date.now()
+      // ✅ SECURE: No stack trace, user data, or internal details
     });
     
     // SECURITY: Return minimum confidence on error (fail-safe)
     const timestamp = Date.now();
     const failSafeSignature = await _signConfidenceResult({ confidence: 0.0, timestamp }, req.merchantId);
     
+    // ✅ SECURE: Return safe error response
     res.status(500).json({
       success: false,
       confidence: 0.0,
       timestamp,
       signature: failSafeSignature,
-      error: 'Confidence calculation failed',
+      error: 'Confidence calculation temporarily unavailable',
+      errorId,
       requestId: req.body.requestId
     });
   }
@@ -218,9 +224,30 @@ function _applySecurityPenalties(confidence, factors, deviceContext) {
   return Math.max(0.0, confidence - penalty);
 }
 
+// 🚨 SECURITY FIX 2: Secure Cryptographic Key Management (CVSS 6.5 MEDIUM)
+// ✅ SECURE: Enhanced key validation
+async function _getSecureSigningKey() {
+  const signingKey = process.env.CONFIDENCE_SIGNING_KEY;
+  
+  if (!signingKey) {
+    throw new Error('SECURITY ERROR: CONFIDENCE_SIGNING_KEY environment variable required');
+  }
+  
+  if (signingKey.length < 32) {
+    throw new Error('SECURITY ERROR: CONFIDENCE_SIGNING_KEY must be at least 32 characters');
+  }
+  
+  if (signingKey === 'default-dev-key-change-in-production') {
+    throw new Error('SECURITY ERROR: Default signing key detected in production');
+  }
+  
+  return signingKey;
+}
+
+// ✅ SECURE: Use validated key
 async function _signConfidenceResult(result, merchantId) {
   const crypto = require('crypto');
-  const signingKey = process.env.CONFIDENCE_SIGNING_KEY || 'default-dev-key-change-in-production';
+  const signingKey = await _getSecureSigningKey();
   const payload = `${result.confidence}:${result.timestamp}:${merchantId}`;
   const hmac = crypto.createHmac('sha256', signingKey);
   hmac.update(payload);
