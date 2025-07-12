@@ -185,8 +185,8 @@ const validateAndSanitizeInput = (req, res, next) => {
  * Rate Limiting - CRITICAL SECURITY FIX
  */
 const identityRateLimit = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // limit each IP to 10 requests per windowMs
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10), // 15 minutes default
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '1000', 10), // 1000 requests per window for development
   message: {
     success: false,
     error: 'Too many requests, please try again later',
@@ -194,6 +194,10 @@ const identityRateLimit = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req, res) => {
+    // Skip rate limiting if disabled via environment variable
+    return process.env.RATE_LIMITING_ENABLED === 'false';
+  },
   handler: (req, res) => {
     logger.warn('SECURITY: Rate limit exceeded', {
       ip: req.ip,

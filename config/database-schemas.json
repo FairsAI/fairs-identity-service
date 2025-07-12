@@ -33,75 +33,70 @@
   },
   
   "user_addresses": {
-    "required": ["id", "user_id", "type"],
-    "optional": ["address_line_1", "address_line_2", "city", "state", "postal_code", "country", "created_at", "updated_at"],
+    "required": ["id", "user_id", "address_type", "address_line_1", "city", "state_province", "postal_code", "country_code"],
+    "optional": ["label", "first_name", "last_name", "company", "address_line_2", "phone", "delivery_instructions", "is_default_shipping", "is_default_billing", "created_at", "updated_at"],
     "readOnly": ["id", "created_at"],
     "dataTypes": {
-      "id": "string",
-      "user_id": "string",
-      "type": "string",
+      "id": "uuid",
+      "user_id": "integer",
+      "address_type": "string",
+      "label": "string",
+      "first_name": "string",
+      "last_name": "string",
+      "company": "string",
       "address_line_1": "string",
       "address_line_2": "string",
       "city": "string",
-      "state": "string",
+      "state_province": "string",
       "postal_code": "string",
-      "country": "string",
+      "country_code": "string",
+      "phone": "string",
+      "delivery_instructions": "string",
+      "is_default_shipping": "boolean",
+      "is_default_billing": "boolean",
       "created_at": "date",
       "updated_at": "date"
     },
     "constraints": {
-      "type": {
+      "address_type": {
         "maxLength": 20
       },
-      "address_line_1": {
+      "label": {
         "maxLength": 100
+      },
+      "first_name": {
+        "maxLength": 100
+      },
+      "last_name": {
+        "maxLength": 100
+      },
+      "company": {
+        "maxLength": 100
+      },
+      "address_line_1": {
+        "maxLength": 255
       },
       "address_line_2": {
-        "maxLength": 100
+        "maxLength": 255
       },
       "city": {
-        "maxLength": 50
+        "maxLength": 100
       },
-      "state": {
-        "maxLength": 50
+      "state_province": {
+        "maxLength": 100
       },
       "postal_code": {
         "maxLength": 20
       },
-      "country": {
-        "maxLength": 3
+      "country_code": {
+        "maxLength": 2
+      },
+      "phone": {
+        "maxLength": 20
       }
     }
   },
 
-  "user_payment_methods": {
-    "required": ["id", "user_id", "type"],
-    "optional": ["label", "last_four", "expiry_month", "expiry_year", "created_at", "updated_at"],
-    "readOnly": ["id", "created_at"],
-    "dataTypes": {
-      "id": "string",
-      "user_id": "string",
-      "type": "string",
-      "label": "string",
-      "last_four": "string",
-      "expiry_month": "number",
-      "expiry_year": "number",
-      "created_at": "date",
-      "updated_at": "date"
-    },
-    "constraints": {
-      "type": {
-        "maxLength": 20
-      },
-      "label": {
-        "maxLength": 50
-      },
-      "last_four": {
-        "minLength": 4,
-        "maxLength": 4
-      }
-    }
-  },
 
   "device_fingerprints": {
     "required": ["id", "user_id", "fingerprint_hash"],

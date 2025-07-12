@@ -4,9 +4,7 @@ const jwt = require('jsonwebtoken');
 const validator = require('validator');
 const rateLimit = require('express-rate-limit');
 const userAddressRepository = require('../repositories/user-address-repository');
-const userPaymentMethodRepository = require('../repositories/user-payment-method-repository');
 const { userRepository } = require('../repositories/user-repository');
-const { validatePaymentMethod } = require('../middleware/payment-method-validation');
 const { logger } = require('../utils/logger');
 
 // ============================================================================
@@ -644,343 +642,6 @@ router.post('/addresses/:addressId/used', async (req, res) => {
   }
 });
 
-// ============================================================================
-// ENHANCED SCHEMA: MULTIPLE PAYMENT METHOD MANAGEMENT
-// ============================================================================
-
-/**
- * Save user payment method with label and nickname - SECURITY FIXED
- * POST /api/payment-methods
- */
-router.post('/payment-methods', validateFinancialInput, validatePaymentMethod, async (req, res) => {
-  logger.info({
-    message: 'Enhanced Schema: Save user payment method request',
-    userId: req.body.userId,
-    email: req.body.email,
-    label: req.body.label || req.body.nickname,
-    type: req.body.type || req.body.paymentType
-  });
-
-  try {
-    let { userId, email, firstName, lastName, type, nickname, ...paymentData } = req.body;
-    
-    // 🚨 CRITICAL SECURITY FIX: Use authenticated user's ID
-    const authenticatedUserId = req.user?.id || req.user?.user_id;
-    
-    // If userId provided in body, verify it matches authenticated user
-    if (userId && String(userId) !== String(authenticatedUserId)) {
-      return res.status(403).json({
-        success: false,
-        error: 'Cannot create payment methods for other users',
-        code: 'PAYMENT_METHOD_CREATION_DENIED'
-      });
-    }
-    
-    // Force use of authenticated user's ID
-    userId = authenticatedUserId;
-    
-    // If no userId from auth, create user first
-    if (!userId && email) {
-      logger.info('Enhanced Schema: Creating new user for payment method', { email, firstName, lastName });
-      
-      try {
-        // Check if user already exists by email
-        const existingUser = await userRepository.getUserByEmail(email);
-        
-        if (existingUser) {
-          userId = existingUser.id;
-          logger.info('Enhanced Schema: Found existing user', { userId, email });
-        } else {
-          // Create new user
-          const newUser = await userRepository.createUser({
-            email,
-            firstName: firstName || 'User',
-            lastName: lastName || '',
-            phone: paymentData.phone || null
-          });
-          userId = newUser.id;
-          logger.info('Enhanced Schema: Created new user', { userId, email });
-        }
-      } catch (userError) {
-        logger.error('Enhanced Schema: Failed to create user', userError);
-        return res.status(500).json({ 
-          success: false, 
-          error: 'Failed to create user: ' + userError.message 
-        });
-      }
-    }
-    
-    if (!userId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'User ID or email is required for payment method creation' 
-      });
-    }
-
-    // Map API fields to repository expected fields
-    // Note: paymentData has already been validated and normalized by validatePaymentMethod middleware
-    const mappedPaymentData = {
-      ...paymentData,
-      paymentType: type || paymentData.paymentType || 'credit_card',
-      label: nickname || paymentData.label || 'Personal Card'
-    };
-
-    const paymentMethod = await userPaymentMethodRepository.savePaymentMethod(userId, mappedPaymentData);
-    
-    // Log successful creation with validation details
-    logger.info('Enhanced Schema: Payment method created successfully', {
-      userId,
-      paymentMethodId: paymentMethod.id,
-      type: mappedPaymentData.paymentType,
-      label: mappedPaymentData.label,
-      hasValidExpiry: !!(paymentMethod.expiry_month && paymentMethod.expiry_year),
-      expiryFormatted: paymentMethod.expiry_month && paymentMethod.expiry_year ? 
-        `${String(paymentMethod.expiry_month).padStart(2, '0')}/${paymentMethod.expiry_year}` : null
-    });
-    
-    res.json({ 
-      success: true, 
-      paymentMethod,
-      userId, // ✅ Return real integer ID for frontend to store
-      message: `${mappedPaymentData.label || 'Payment method'} saved successfully`,
-      validation: {
-        expiry: paymentMethod.expiry_month && paymentMethod.expiry_year ? 
-          `${String(paymentMethod.expiry_month).padStart(2, '0')}/${paymentMethod.expiry_year}` : null,
-        validated: true
-      }
-    });
-  } catch (error) {
-    logger.error('Failed to save Enhanced Schema payment method:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-/**
- * Get all payment methods for user - SECURITY FIXED
- * GET /api/payment-methods/:userId
- */
-router.get('/payment-methods/:userId', validateUserOwnership, async (req, res) => {
-  logger.info({
-    message: 'Enhanced Schema: Get user payment methods request',
-    userId: req.params.userId
-  });
-
-  try {
-    const paymentMethods = await userPaymentMethodRepository.getUserPaymentMethods(req.params.userId);
-    
-    res.json({ 
-      success: true, 
-      paymentMethods,
-      count: paymentMethods.length
-    });
-  } catch (error) {
-    logger.error('Failed to get user payment methods:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-/**
- * Update payment method
- * PUT /api/payment-methods/:paymentMethodId
- */
-router.put('/payment-methods/:paymentMethodId', validatePaymentMethod, async (req, res) => {
-  logger.info({
-    message: 'Enhanced Schema: Update payment method request',
-    paymentMethodId: req.params.paymentMethodId,
-    userId: req.body.userId
-  });
-
-  try {
-    const { userId, ...updateData } = req.body;
-    
-    if (!userId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'User ID is required' 
-      });
-    }
-
-    const paymentMethod = await userPaymentMethodRepository.updatePaymentMethod(req.params.paymentMethodId, userId, updateData);
-    
-    res.json({ 
-      success: true, 
-      paymentMethod,
-      message: 'Payment method updated successfully'
-    });
-  } catch (error) {
-    logger.error('Failed to update payment method:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-/**
- * Delete payment method
- * DELETE /api/payment-methods/:paymentMethodId
- */
-router.delete('/payment-methods/:paymentMethodId', async (req, res) => {
-  logger.info({
-    message: 'Enhanced Schema: Delete payment method request',
-    paymentMethodId: req.params.paymentMethodId,
-    userId: req.body.userId
-  });
-
-  try {
-    const { userId } = req.body;
-    
-    if (!userId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'User ID is required' 
-      });
-    }
-
-    const deletedPaymentMethod = await userPaymentMethodRepository.deletePaymentMethod(req.params.paymentMethodId, userId);
-    
-    res.json({ 
-      success: true, 
-      deletedPaymentMethod,
-      message: 'Payment method deleted successfully'
-    });
-  } catch (error) {
-    logger.error('Failed to delete payment method:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-/**
- * Set payment method as default
- * POST /api/payment-methods/:paymentMethodId/default
- */
-router.post('/payment-methods/:paymentMethodId/default', async (req, res) => {
-  logger.info({
-    message: 'Enhanced Schema: Set payment method as default request',
-    paymentMethodId: req.params.paymentMethodId,
-    userId: req.body.userId
-  });
-
-  try {
-    const { userId } = req.body;
-    
-    if (!userId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'User ID is required' 
-      });
-    }
-
-    const paymentMethod = await userPaymentMethodRepository.setAsDefault(req.params.paymentMethodId, userId);
-    
-    res.json({ 
-      success: true, 
-      paymentMethod,
-      message: 'Payment method set as default successfully'
-    });
-  } catch (error) {
-    logger.error('Failed to set payment method as default:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-/**
- * Track payment method usage
- * POST /api/payment-methods/:paymentMethodId/used
- */
-router.post('/payment-methods/:paymentMethodId/used', async (req, res) => {
-  logger.info({
-    message: 'Enhanced Schema: Track payment method usage',
-    paymentMethodId: req.params.paymentMethodId,
-    userId: req.body.userId
-  });
-
-  try {
-    const { userId } = req.body;
-    
-    if (!userId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'User ID is required' 
-      });
-    }
-
-    const usage = await userPaymentMethodRepository.trackUsage(req.params.paymentMethodId, userId);
-    
-    res.json({ 
-      success: true, 
-      usage,
-      message: 'Payment method usage tracked successfully'
-    });
-  } catch (error) {
-    logger.error('Failed to track payment method usage:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-/**
- * Update billing address for payment method
- * PUT /api/payment-methods/:paymentMethodId/billing-address
- */
-router.put('/payment-methods/:paymentMethodId/billing-address', async (req, res) => {
-  logger.info({
-    message: 'Enhanced Schema: Update payment method billing address',
-    paymentMethodId: req.params.paymentMethodId,
-    userId: req.body.userId,
-    billingAddressId: req.body.billingAddressId
-  });
-
-  try {
-    const { userId, billingAddressId } = req.body;
-    
-    if (!userId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'User ID is required' 
-      });
-    }
-
-    if (!billingAddressId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Billing address ID is required' 
-      });
-    }
-
-    const paymentMethod = await userPaymentMethodRepository.updateBillingAddress(
-      req.params.paymentMethodId, 
-      billingAddressId, 
-      userId
-    );
-    
-    res.json({ 
-      success: true, 
-      paymentMethod,
-      message: 'Payment method billing address updated successfully'
-    });
-  } catch (error) {
-    logger.error('Failed to update payment method billing address:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
 
 // ============================================================================
 // ENHANCED SCHEMA: COMPLETE USER PROFILE
@@ -1000,11 +661,9 @@ router.get('/users/:userId/profile', validateUserOwnership, async (req, res) => 
     const userId = req.params.userId;
 
     // Get all user data in parallel
-    const [addresses, paymentMethods, defaultAddresses, defaultPaymentMethod] = await Promise.all([
+    const [addresses, defaultAddresses] = await Promise.all([
       userAddressRepository.getUserAddresses(userId),
-      userPaymentMethodRepository.getUserPaymentMethods(userId),
-      userAddressRepository.getDefaultAddresses(userId),
-      userPaymentMethodRepository.getDefaultPaymentMethod(userId)
+      userAddressRepository.getDefaultAddresses(userId)
     ]);
 
     // Organize addresses by type
@@ -1017,15 +676,12 @@ router.get('/users/:userId/profile', validateUserOwnership, async (req, res) => 
     const profile = {
       userId,
       addresses: addressesByType,
-      paymentMethods,
       defaults: {
         shippingAddress: defaultAddresses.shipping,
-        billingAddress: defaultAddresses.billing,
-        paymentMethod: defaultPaymentMethod
+        billingAddress: defaultAddresses.billing
       },
       stats: {
         totalAddresses: addresses.length,
-        totalPaymentMethods: paymentMethods.length,
         shippingAddresses: addressesByType.shipping.length,
         billingAddresses: addressesByType.billing.length
       }
@@ -1058,15 +714,11 @@ router.get('/users/:userId/defaults', validateUserOwnership, async (req, res) =>
   try {
     const userId = req.params.userId;
 
-    const [defaultAddresses, defaultPaymentMethod] = await Promise.all([
-      userAddressRepository.getDefaultAddresses(userId),
-      userPaymentMethodRepository.getDefaultPaymentMethod(userId)
-    ]);
+    const defaultAddresses = await userAddressRepository.getDefaultAddresses(userId);
 
     const defaults = {
       shippingAddress: defaultAddresses.shipping,
-      billingAddress: defaultAddresses.billing,
-      paymentMethod: defaultPaymentMethod
+      billingAddress: defaultAddresses.billing
     };
 
     res.json({ 

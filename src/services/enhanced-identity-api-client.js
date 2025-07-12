@@ -46,32 +46,22 @@ class EnhancedIdentityAPIClient {
             (SELECT json_agg(
               json_build_object(
                 'id', ua.id,
-                'address_line1', ua.address_line1,
+                'address_line_1', ua.address_line_1,
                 'city', ua.city,
-                'state', ua.state,
+                'state_province', ua.state_province,
                 'postal_code', ua.postal_code,
-                'country', ua.country,
-                'is_preferred', ua.is_preferred,
+                'country_code', ua.country_code,
+                'is_default_shipping', ua.is_default_shipping,
+                'is_default_billing', ua.is_default_billing,
                 'address_type', ua.address_type,
-                'geocode_confidence', ua.geocode_confidence
+                'label', ua.label
               )
             ) FROM identity_service.user_addresses ua WHERE ua.user_id = u.id),
             '[]'::json
           ) as user_addresses,
           
-          -- User payment methods
-          COALESCE(
-            (SELECT json_agg(
-              json_build_object(
-                'id', upm.id,
-                'payment_type', upm.payment_type,
-                'is_preferred', upm.is_preferred,
-                'last_used_at', upm.last_used_at,
-                'usage_count', upm.usage_count
-              )
-            ) FROM identity_service.user_payment_methods upm WHERE upm.user_id = u.id),
-            '[]'::json
-          ) as user_payment_methods,
+          -- User payment methods managed by payments service
+          '[]'::json as user_payment_methods,
           
           -- Recent behavior analytics
           (SELECT json_build_object(
@@ -114,7 +104,7 @@ class EnhancedIdentityAPIClient {
         lifetime_value: user.lifetime_value || 0.0,
         trust_score: trustScore,
         user_addresses: user.user_addresses || [],
-        user_payment_methods: user.user_payment_methods || [],
+        user_payment_methods: [], // Managed by payments service
         recent_behavior: user.recent_behavior || {}
       };
 

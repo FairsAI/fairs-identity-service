@@ -148,24 +148,8 @@ class DataTransparencyService {
                 });
             });
 
-            // Get payment methods (metadata only, no card details)
-            const paymentQuery = `
-                SELECT brand, last4, created_at
-                FROM payment_service.user_payment_methods WHERE user_id = $1
-            `;
-            try {
-                const paymentResult = await dbConnection.query(paymentQuery, [userId]);
-                paymentResult.forEach(pm => {
-                    inventory.COMMERCIAL_INFO.push({
-                        field: 'payment_method',
-                        value: `${pm.brand} ending in ${pm.last4}`,
-                        collected: pm.created_at
-                    });
-                });
-            } catch (paymentError) {
-                // Payment service table may not exist
-                this.logger.warn('Could not access payment data', { userId, error: paymentError.message });
-            }
+            // Payment methods are managed by the payments service
+            this.logger.info('Payment method data managed by payments service', { userId });
 
             // Get session data
             const sessionQuery = `

@@ -40,8 +40,8 @@ class UserAddressRepository {
       userId,
       addressType,
       addressData.label || 'Address',
-      addressData.firstName || addressData.first_name || addressData.email?.split('@')[0] || 'User',  // Extract from email if needed
-      addressData.lastName || addressData.last_name || 'User',    // Default last name
+      addressData.firstName || addressData.first_name || addressData.email?.split('@')[0] || 'User',
+      addressData.lastName || addressData.last_name || 'User',
       addressData.company || null,
       addressData.addressLine1 || addressData.address_line_1,
       addressData.addressLine2 || addressData.address_line_2 || null,
