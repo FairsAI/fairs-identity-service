@@ -19,7 +19,9 @@ class UserRepository {
       logger.debug('Getting user by ID', { userId });
       
       const query = `
-        SELECT id, email, first_name, last_name, phone, created_at, updated_at, is_active
+        SELECT id, email, first_name, last_name, phone,
+               is_guest, member_converted_at, original_guest_id,
+               created_at, updated_at, is_active
         FROM identity_service.users 
         WHERE id = $1 AND is_active = true
       `;
@@ -49,7 +51,9 @@ class UserRepository {
       logger.debug('Getting user by email', { email });
       
       const query = `
-        SELECT id, email, first_name, last_name, phone, created_at, updated_at, is_active
+        SELECT id, email, first_name, last_name, phone, 
+               is_guest, member_converted_at, original_guest_id,
+               created_at, updated_at, is_active
         FROM identity_service.users 
         WHERE email = $1 AND is_active = true
       `;
@@ -81,9 +85,29 @@ class UserRepository {
    */
   async createUser(userData) {
     try {
-      const { email, firstName, lastName, phone, password } = userData;
+      const { 
+        email, 
+        firstName, 
+        first_name,
+        lastName, 
+        last_name,
+        phone, 
+        password,
+        is_guest,
+        member_converted_at,
+        original_guest_id
+      } = userData;
       
-      logger.debug('Creating new user', { email, firstName, lastName });
+      // Handle both camelCase and snake_case field names
+      const finalFirstName = firstName || first_name;
+      const finalLastName = lastName || last_name;
+      
+      logger.debug('Creating new user', { 
+        email, 
+        firstName: finalFirstName, 
+        lastName: finalLastName,
+        isGuest: is_guest 
+      });
       
       // Check if user already exists
       const existingUser = await this.getUserByEmail(email);
@@ -97,25 +121,39 @@ class UserRepository {
         hashedPassword = await bcrypt.hash(password, 12);
       }
       
+      // Generate ID if not provided (for guest-to-member conversion, use the guest ID)
+      const userId = userData.id || original_guest_id || Date.now().toString();
+      
       const query = `
-        INSERT INTO identity_service.users (email, first_name, last_name, phone, password_hash, created_at, updated_at, is_active)
-        VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), true)
-        RETURNING id, email, first_name, last_name, phone, created_at, updated_at, is_active
+        INSERT INTO identity_service.users (
+          id, email, first_name, last_name, phone, password_hash, 
+          is_guest, member_converted_at, original_guest_id,
+          created_at, updated_at, is_active
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW(), true)
+        RETURNING id, email, first_name, last_name, phone, 
+                  is_guest, member_converted_at, original_guest_id,
+                  created_at, updated_at, is_active
       `;
       
       const values = [
+        userId,
         email.toLowerCase(),
-        firstName,
-        lastName,
+        finalFirstName,
+        finalLastName,
         phone || null,
-        hashedPassword
+        hashedPassword,
+        is_guest || false,
+        member_converted_at || null,
+        original_guest_id || null
       ];
       
       const result = await dbConnection.query(query, values);
       
       logger.info('User created successfully', { 
         userId: result[0].id, 
-        email: result[0].email 
+        email: result[0].email,
+        isGuest: result[0].is_guest
       });
       
       return result[0];
@@ -138,7 +176,16 @@ class UserRepository {
     try {
       logger.debug('Updating user', { userId, fields: Object.keys(updateData) });
       
-      const allowedFields = ['first_name', 'last_name', 'phone'];
+      // Include new member conversion fields in allowed updates
+      const allowedFields = [
+        'first_name', 
+        'last_name', 
+        'phone', 
+        'is_guest', 
+        'member_converted_at', 
+        'original_guest_id',
+        'is_active'
+      ];
       const updates = [];
       const values = [];
       let paramIndex = 1;
@@ -162,7 +209,9 @@ class UserRepository {
         UPDATE identity_service.users 
         SET ${updates.join(', ')}
         WHERE id = $${paramIndex} AND is_active = true
-        RETURNING id, email, first_name, last_name, phone, created_at, updated_at, is_active
+        RETURNING id, email, first_name, last_name, phone, 
+                  is_guest, member_converted_at, original_guest_id,
+                  created_at, updated_at, is_active
       `;
       
       const result = await dbConnection.query(query, values);
@@ -171,7 +220,11 @@ class UserRepository {
         throw new Error('User not found or inactive');
       }
       
-      logger.info('User updated successfully', { userId });
+      logger.info('User updated successfully', { 
+        userId,
+        isGuest: result[0].is_guest,
+        memberConverted: !!result[0].member_converted_at
+      });
       return result[0];
     } catch (error) {
       logger.error('Error updating user', { error: error.message, userId });

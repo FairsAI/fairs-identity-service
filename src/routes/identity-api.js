@@ -37,6 +37,7 @@ const { logger } = require('../utils/logger');
 const { identityService } = require('../services/identity-service');
 const { dbConnection } = require('../database/db-connection');
 const { validateVerification, sanitizeString, validatePaymentInput } = require('../middleware/payment-validation');
+const { eventBus } = require('../events/event-bus');
 const { sanitizeInput, sanitizeVerificationInput } = require('../middleware/input-sanitization');
 const { rateLimiter } = require('../middleware/rate-limiter');
 const { validateApiKey, validateMerchantAccess } = require('../middleware/auth-middleware');
@@ -2748,5 +2749,182 @@ async function _getEnhancedAuthAnalysis(merchantId, sessionToken, deviceContext,
     };
   }
 }
+
+/**
+ * Convert Guest to Member (Best Practice Implementation)
+ * POST /api/convert-guest-to-member
+ * 
+ * Converts a guest user to an authenticated member after transaction completion
+ * This is the proper approach for guest-to-member conversion following enterprise patterns
+ */
+router.post('/convert-guest-to-member', 
+  authenticateRequest, 
+  validateAndSanitizeInput,
+  async (req, res) => {
+    const startTime = Date.now();
+    
+    logger.info({
+      message: 'Identity Service: Guest to member conversion request',
+      guestUserId: req.body.guestUserId,
+      email: req.body.email
+    });
+
+    try {
+      const { guestUserId, email, phone, firstName, lastName, transactionData } = req.body;
+      
+      // Validate required fields
+      if (!guestUserId || !email) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Guest user ID and email are required for conversion' 
+        });
+      }
+
+      // Validate email format
+      if (!validator.isEmail(email)) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Invalid email format' 
+        });
+      }
+
+      // Check if user already exists as authenticated member
+      const existingUser = await userRepository.getUserByEmail(email);
+      if (existingUser && !existingUser.is_guest) {
+        logger.info('Identity Service: User already exists as authenticated member', { 
+          userId: existingUser.id, 
+          email 
+        });
+        
+        return res.json({ 
+          success: true, 
+          userId: existingUser.id,
+          member: {
+            id: existingUser.id,
+            email: existingUser.email,
+            firstName: existingUser.first_name,
+            lastName: existingUser.last_name,
+            phone: existingUser.phone,
+            isAuthenticated: true,
+            memberSince: existingUser.created_at
+          },
+          message: 'User already exists as authenticated member'
+        });
+      }
+
+      let finalUser;
+      
+      if (existingUser && existingUser.is_guest) {
+        // Convert existing guest to member
+        logger.info('Identity Service: Converting existing guest to member', {
+          guestId: existingUser.id,
+          email
+        });
+        
+        const updateData = {
+          is_guest: false,
+          is_active: true,
+          first_name: firstName || existingUser.first_name,
+          last_name: lastName || existingUser.last_name,
+          phone: phone || existingUser.phone,
+          member_converted_at: new Date()
+        };
+        
+        finalUser = await userRepository.updateUser(existingUser.id, updateData);
+        
+      } else {
+        // Create new authenticated member
+        logger.info('Identity Service: Creating new authenticated member', {
+          email,
+          guestUserId
+        });
+        
+        // Extract numeric ID from guest ID format (e.g., "guest_1234567890" -> "1234567890")
+        const numericUserId = guestUserId.startsWith('guest_') 
+          ? guestUserId.replace('guest_', '') 
+          : guestUserId;
+        
+        const userData = {
+          id: numericUserId, // Use the same ID to maintain continuity
+          email,
+          first_name: firstName || 'Member',
+          last_name: lastName || '',
+          phone: phone || null,
+          is_guest: false,
+          is_active: true,
+          member_converted_at: new Date(),
+          original_guest_id: guestUserId
+        };
+
+        finalUser = await userRepository.createUser(userData);
+      }
+      
+      // Log conversion event for audit trail
+      logger.info('Identity Service: Guest to member conversion completed', { 
+        originalGuestId: guestUserId,
+        newMemberId: finalUser.id, 
+        email: finalUser.email,
+        conversionTime: Date.now() - startTime
+      });
+
+      // Generate new session token for converted member
+      const newSessionToken = jwt.sign(
+        {
+          user_id: finalUser.id,
+          email: finalUser.email,
+          phone: finalUser.phone,
+          isAuthenticated: true,
+          isGuest: false, // Now a member
+          exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours
+        },
+        process.env.JWT_SECRET || 'fallback-secret-key'
+      );
+
+      // Emit event for data migration across services
+      eventBus.emitUserConversion({
+        guestUserId,
+        memberId: finalUser.id,
+        email: finalUser.email,
+        transactionData,
+        conversionTimestamp: new Date().toISOString(),
+        originalGuestId: guestUserId
+      });
+      
+      res.json({ 
+        success: true, 
+        userId: finalUser.id,
+        member: {
+          id: finalUser.id,
+          email: finalUser.email,
+          firstName: finalUser.first_name,
+          lastName: finalUser.last_name,
+          phone: finalUser.phone,
+          isAuthenticated: true,
+          memberSince: finalUser.member_converted_at || finalUser.created_at
+        },
+        conversion: {
+          originalGuestId: guestUserId,
+          conversionTimestamp: new Date().toISOString(),
+          transactionTriggered: !!transactionData
+        },
+        sessionToken: newSessionToken, // New authenticated session
+        message: 'Guest successfully converted to authenticated member'
+      });
+      
+    } catch (error) {
+      logger.error('Guest to member conversion failed:', {
+        error: error.message,
+        guestUserId: req.body.guestUserId,
+        email: req.body.email
+      });
+      
+      res.status(500).json({ 
+        success: false, 
+        error: 'Internal server error during conversion',
+        code: 'CONVERSION_FAILED'
+      });
+    }
+  }
+);
 
 module.exports = router; 
