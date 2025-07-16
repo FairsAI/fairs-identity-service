@@ -20,7 +20,7 @@ class UserRepository {
       
       const query = `
         SELECT id, email, first_name, last_name, phone,
-               is_guest, member_converted_at, original_guest_id,
+               is_guest, member_converted_at,
                created_at, updated_at, is_active
         FROM identity_service.users 
         WHERE id = $1 AND is_active = true
@@ -52,7 +52,7 @@ class UserRepository {
       
       const query = `
         SELECT id, email, first_name, last_name, phone, 
-               is_guest, member_converted_at, original_guest_id,
+               is_guest, member_converted_at,
                created_at, updated_at, is_active
         FROM identity_service.users 
         WHERE email = $1 AND is_active = true
@@ -95,7 +95,6 @@ class UserRepository {
         password,
         is_guest,
         member_converted_at,
-        original_guest_id
       } = userData;
       
       // Handle both camelCase and snake_case field names
@@ -121,18 +120,25 @@ class UserRepository {
         hashedPassword = await bcrypt.hash(password, 12);
       }
       
-      // Generate ID if not provided (for guest-to-member conversion, use the guest ID)
-      const userId = userData.id || original_guest_id || Date.now().toString();
+      // Generate UUID if not provided (for guest-to-member conversion, use the guest ID)
+      const { v4: uuidv4 } = require('uuid');
+      const userId = userData.id || uuidv4();
+      
+      logger.info('🔍 DEBUG: User ID generation', {
+        providedId: userData.id,
+        finalUserId: userId,
+        userDataKeys: Object.keys(userData)
+      });
       
       const query = `
         INSERT INTO identity_service.users (
           id, email, first_name, last_name, phone, password_hash, 
-          is_guest, member_converted_at, original_guest_id,
+          is_guest, member_converted_at,
           created_at, updated_at, is_active
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW(), true)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW(), true)
         RETURNING id, email, first_name, last_name, phone, 
-                  is_guest, member_converted_at, original_guest_id,
+                  is_guest, member_converted_at,
                   created_at, updated_at, is_active
       `;
       
@@ -144,9 +150,15 @@ class UserRepository {
         phone || null,
         hashedPassword,
         is_guest || false,
-        member_converted_at || null,
-        original_guest_id || null
+        member_converted_at || null
       ];
+      
+      logger.info('🔍 DEBUG: Before INSERT query', {
+        userId: userId,
+        values: values,
+        valueCount: values.length,
+        firstValue: values[0]
+      });
       
       const result = await dbConnection.query(query, values);
       
@@ -182,8 +194,7 @@ class UserRepository {
         'last_name', 
         'phone', 
         'is_guest', 
-        'member_converted_at', 
-        'original_guest_id',
+        'member_converted_at',
         'is_active'
       ];
       const updates = [];
@@ -210,7 +221,7 @@ class UserRepository {
         SET ${updates.join(', ')}
         WHERE id = $${paramIndex} AND is_active = true
         RETURNING id, email, first_name, last_name, phone, 
-                  is_guest, member_converted_at, original_guest_id,
+                  is_guest, member_converted_at,
                   created_at, updated_at, is_active
       `;
       

@@ -424,6 +424,7 @@ router.post('/users', authenticateRequest, validateAndSanitizeInput, async (req,
 
     // Create user in database using UserRepository
     const userData = {
+      id,
       email,
       firstName,
       lastName,
