@@ -702,6 +702,385 @@ class CrossMerchantIdentityRepository {
     
     logger.info('Identity merge completed atomically', { sourceId, targetId });
   }
+
+  /**
+   * Get user by universal ID - RACE CONDITION SAFE
+   * @param {string} universalId - The universal user ID (UUID)
+   * @returns {Promise<Object|null>} User object or null if not found
+   */
+  async getUserByUniversalId(universalId) {
+    try {
+      logger.debug('Getting user by universal ID', { universalId });
+      
+      const query = `
+        SELECT 
+          cmi.identity_key AS universal_id,
+          cmi.primary_email,
+          cmi.primary_phone,
+          cmi.verification_level,
+          cmi.is_verified,
+          cmi.metadata,
+          cmi.associated_devices,
+          cmi.created_at,
+          cmi.updated_at,
+          COUNT(DISTINCT cmu.merchant_id) as merchant_count,
+          COUNT(DISTINCT dua.device_id) as device_count
+        FROM cross_merchant_identities cmi
+        LEFT JOIN cross_merchant_users cmu ON cmi.identity_key = cmu.identity_key
+        LEFT JOIN device_user_associations dua ON cmi.identity_key = dua.user_id
+        WHERE cmi.identity_key = $1
+        GROUP BY cmi.identity_key, cmi.primary_email, cmi.primary_phone, 
+                 cmi.verification_level, cmi.is_verified, cmi.metadata,
+                 cmi.associated_devices, cmi.created_at, cmi.updated_at
+      `;
+      
+      const result = await dbConnection.query(query, [universalId]);
+      
+      if (result.length === 0) {
+        logger.debug('User not found by universal ID', { universalId });
+        return null;
+      }
+      
+      const user = {
+        universalId: result[0].universal_id,
+        email: result[0].primary_email,
+        phone: result[0].primary_phone,
+        verificationLevel: result[0].verification_level,
+        isVerified: result[0].is_verified,
+        metadata: result[0].metadata,
+        associatedDevices: result[0].associated_devices || [],
+        merchantCount: parseInt(result[0].merchant_count),
+        deviceCount: parseInt(result[0].device_count),
+        createdAt: result[0].created_at,
+        updatedAt: result[0].updated_at
+      };
+      
+      logger.debug('Found user by universal ID', { universalId, merchantCount: user.merchantCount });
+      return user;
+      
+    } catch (error) {
+      logger.error('Failed to get user by universal ID', { error: error.message, universalId });
+      throw error;
+    }
+  }
+
+  /**
+   * Get user by merchant-specific user ID - RACE CONDITION SAFE
+   * @param {string} userId - Merchant-specific user ID
+   * @param {string} merchantId - Merchant ID
+   * @returns {Promise<Object|null>} User object with universal ID or null
+   */
+  async getUserByUserId(userId, merchantId) {
+    try {
+      logger.debug('Getting user by merchant user ID', { userId, merchantId });
+      
+      const query = `
+        SELECT 
+          cmu.identity_key AS universal_id,
+          cmu.merchant_user_id,
+          cmu.merchant_id,
+          cmu.custom_data,
+          cmu.last_active,
+          cmi.primary_email,
+          cmi.primary_phone,
+          cmi.verification_level,
+          cmi.is_verified,
+          cmi.metadata
+        FROM cross_merchant_users cmu
+        JOIN cross_merchant_identities cmi ON cmu.identity_key = cmi.identity_key
+        WHERE cmu.merchant_user_id = $1 AND cmu.merchant_id = $2
+        FOR SHARE
+      `;
+      
+      const result = await dbConnection.query(query, [userId, merchantId]);
+      
+      if (result.length === 0) {
+        logger.debug('User not found by merchant user ID', { userId, merchantId });
+        return null;
+      }
+      
+      const user = {
+        universalId: result[0].universal_id,
+        merchantUserId: result[0].merchant_user_id,
+        merchantId: result[0].merchant_id,
+        email: result[0].primary_email,
+        phone: result[0].primary_phone,
+        verificationLevel: result[0].verification_level,
+        isVerified: result[0].is_verified,
+        metadata: result[0].metadata,
+        customData: result[0].custom_data,
+        lastActive: result[0].last_active
+      };
+      
+      logger.debug('Found user by merchant user ID', { userId, merchantId, universalId: user.universalId });
+      return user;
+      
+    } catch (error) {
+      logger.error('Failed to get user by merchant user ID', { error: error.message, userId, merchantId });
+      throw error;
+    }
+  }
+
+  /**
+   * Create a new universal identity - RACE CONDITION SAFE
+   * @param {Object} userData - User data for creation
+   * @param {string} userData.email - Primary email (optional)
+   * @param {string} userData.phone - Primary phone (optional)
+   * @param {Object} userData.metadata - Additional metadata
+   * @param {string} userData.verificationLevel - Verification level (low, medium, high)
+   * @returns {Promise<string>} The new universal ID (UUID)
+   */
+  async createUniversalId(userData = {}) {
+    return this._withRetry('createUniversalId', async () => {
+      return await dbConnection.transaction(async (client) => {
+        const {
+          email = null,
+          phone = null,
+          metadata = {},
+          verificationLevel = 'low'
+        } = userData;
+        
+        const universalId = uuidv4();
+        
+        logger.debug('Creating new universal identity', {
+          universalId,
+          hasEmail: !!email,
+          hasPhone: !!phone
+        });
+        
+        // Check if email or phone already exists
+        if (email || phone) {
+          let existingCheckQuery = 'SELECT identity_key FROM cross_merchant_identities WHERE ';
+          const conditions = [];
+          const values = [];
+          let paramIndex = 1;
+          
+          if (email) {
+            conditions.push(`primary_email = $${paramIndex}`);
+            values.push(email);
+            paramIndex++;
+          }
+          
+          if (phone) {
+            if (conditions.length > 0) conditions.push('OR');
+            conditions.push(`primary_phone = $${paramIndex}`);
+            values.push(phone);
+          }
+          
+          existingCheckQuery += conditions.join(' ') + ' LIMIT 1';
+          
+          const existingResult = await client.query(existingCheckQuery, values);
+          
+          if (existingResult.rows.length > 0) {
+            logger.warn('Universal identity already exists for email/phone', {
+              existingId: existingResult.rows[0].identity_key,
+              email: email ? '***' : null,
+              phone: phone ? '***' : null
+            });
+            return existingResult.rows[0].identity_key;
+          }
+        }
+        
+        // Insert new universal identity
+        const insertQuery = `
+          INSERT INTO cross_merchant_identities (
+            identity_key,
+            primary_email,
+            primary_phone,
+            verification_level,
+            is_verified,
+            metadata,
+            associated_devices
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          ON CONFLICT (identity_key) DO NOTHING
+          RETURNING identity_key
+        `;
+        
+        const insertValues = [
+          universalId,
+          email,
+          phone,
+          verificationLevel,
+          false, // is_verified starts as false
+          metadata,
+          [] // empty device array initially
+        ];
+        
+        const result = await client.query(insertQuery, insertValues);
+        
+        if (result.rows.length === 0) {
+          throw new Error('Failed to create universal identity');
+        }
+        
+        logger.info('Created new universal identity', {
+          universalId,
+          verificationLevel
+        });
+        
+        return universalId;
+      });
+    });
+  }
+
+  /**
+   * Associate a merchant user with a universal ID - RACE CONDITION SAFE
+   * @param {string} universalId - Universal ID
+   * @param {string} merchantId - Merchant ID
+   * @param {string} merchantUserId - Merchant-specific user ID
+   * @param {Object} options - Association options
+   * @returns {Promise<Object>} Association details
+   */
+  async associateMerchant(universalId, merchantId, merchantUserId, options = {}) {
+    return this._withRetry('associateMerchant', async () => {
+      return await dbConnection.transaction(async (client) => {
+        const {
+          customData = {},
+          isActive = true
+        } = options;
+        
+        logger.debug('Associating merchant user with universal ID', {
+          universalId,
+          merchantId,
+          merchantUserId
+        });
+        
+        // Verify universal ID exists
+        const verifyQuery = `
+          SELECT identity_key 
+          FROM cross_merchant_identities 
+          WHERE identity_key = $1
+          FOR UPDATE
+        `;
+        
+        const verifyResult = await client.query(verifyQuery, [universalId]);
+        
+        if (verifyResult.rows.length === 0) {
+          throw new Error(`Universal ID not found: ${universalId}`);
+        }
+        
+        // Insert or update merchant association
+        const upsertQuery = `
+          INSERT INTO cross_merchant_users (
+            identity_key,
+            merchant_id,
+            merchant_user_id,
+            custom_data,
+            is_active,
+            last_active
+          )
+          VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+          ON CONFLICT (merchant_id, merchant_user_id)
+          DO UPDATE SET
+            identity_key = $1,
+            custom_data = $4,
+            is_active = $5,
+            last_active = CURRENT_TIMESTAMP
+          RETURNING *
+        `;
+        
+        const values = [
+          universalId,
+          merchantId,
+          merchantUserId,
+          customData,
+          isActive
+        ];
+        
+        const result = await client.query(upsertQuery, values);
+        
+        logger.info('Associated merchant user with universal ID', {
+          universalId,
+          merchantId,
+          merchantUserId
+        });
+        
+        return {
+          universalId: result.rows[0].identity_key,
+          merchantId: result.rows[0].merchant_id,
+          merchantUserId: result.rows[0].merchant_user_id,
+          customData: result.rows[0].custom_data,
+          isActive: result.rows[0].is_active,
+          createdAt: result.rows[0].created_at,
+          lastActive: result.rows[0].last_active
+        };
+      });
+    });
+  }
+
+  /**
+   * Get merchant-specific data for a universal user - RACE CONDITION SAFE
+   * @param {string} universalId - Universal ID
+   * @param {string} merchantId - Merchant ID
+   * @returns {Promise<Object|null>} Merchant-specific user data or null
+   */
+  async getMerchantData(universalId, merchantId) {
+    try {
+      logger.debug('Getting merchant data for universal user', { universalId, merchantId });
+      
+      const query = `
+        SELECT 
+          cmu.*,
+          cmi.primary_email,
+          cmi.primary_phone,
+          cmi.verification_level,
+          cmi.is_verified,
+          cmi.metadata as global_metadata,
+          COUNT(dua.device_id) as device_count
+        FROM cross_merchant_users cmu
+        JOIN cross_merchant_identities cmi ON cmu.identity_key = cmi.identity_key
+        LEFT JOIN device_user_associations dua ON (
+          cmu.identity_key = dua.user_id 
+          AND cmu.merchant_id = dua.merchant_id
+          AND dua.status = 'active'
+        )
+        WHERE cmu.identity_key = $1 AND cmu.merchant_id = $2
+        GROUP BY cmu.identity_key, cmu.merchant_id, cmu.merchant_user_id,
+                 cmu.custom_data, cmu.is_active, cmu.created_at, cmu.last_active,
+                 cmi.primary_email, cmi.primary_phone, cmi.verification_level,
+                 cmi.is_verified, cmi.metadata
+      `;
+      
+      const result = await dbConnection.query(query, [universalId, merchantId]);
+      
+      if (result.length === 0) {
+        logger.debug('No merchant data found', { universalId, merchantId });
+        return null;
+      }
+      
+      const merchantData = {
+        universalId: result[0].identity_key,
+        merchantId: result[0].merchant_id,
+        merchantUserId: result[0].merchant_user_id,
+        email: result[0].primary_email,
+        phone: result[0].primary_phone,
+        verificationLevel: result[0].verification_level,
+        isVerified: result[0].is_verified,
+        customData: result[0].custom_data,
+        globalMetadata: result[0].global_metadata,
+        isActive: result[0].is_active,
+        deviceCount: parseInt(result[0].device_count),
+        createdAt: result[0].created_at,
+        lastActive: result[0].last_active
+      };
+      
+      logger.debug('Found merchant data', { 
+        universalId, 
+        merchantId, 
+        deviceCount: merchantData.deviceCount 
+      });
+      
+      return merchantData;
+      
+    } catch (error) {
+      logger.error('Failed to get merchant data', { 
+        error: error.message, 
+        universalId, 
+        merchantId 
+      });
+      throw error;
+    }
+  }
 }
 
 // Create and export a singleton instance
