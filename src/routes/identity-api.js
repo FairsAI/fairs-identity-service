@@ -393,10 +393,10 @@ router.post('/users', authenticateRequest, validateAndSanitizeInput, async (req,
   try {
     const { id, email, firstName, lastName, phone, temporary, consented } = req.body;
     
-    if (!id || !email) {
+    if (!email) {
       return res.status(400).json({ 
         success: false, 
-        error: 'User ID and email are required' 
+        error: 'Email is required' 
       });
     }
 
