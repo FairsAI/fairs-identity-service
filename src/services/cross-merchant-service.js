@@ -507,6 +507,118 @@ class CrossMerchantService {
       metadata
     });
   }
+
+  /**
+   * Find user by device ID
+   * @param {number} deviceId - Device ID
+   * @param {Object} options - Search options
+   * @returns {Promise<Object>} User association data
+   */
+  async findUserByDevice(deviceId, options = {}) {
+    try {
+      this.logger.debug('Finding user by device', {
+        deviceId,
+        options
+      });
+
+      return await this.repository.findUserByDevice(deviceId, options);
+    } catch (error) {
+      this.logger.error('Failed to find user by device', {
+        error: error.message,
+        deviceId
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Associate device with user
+   * @param {string} universalId - Universal ID
+   * @param {number} deviceId - Device ID
+   * @param {Object} options - Association options
+   * @returns {Promise<Object>} Association result
+   */
+  async associateDeviceWithUser(universalId, deviceId, options = {}) {
+    try {
+      this.logger.info('Associating device with user', {
+        universalId: universalId.substring(0, 8) + '...',
+        deviceId,
+        options
+      });
+
+      const result = await this.repository.associateDeviceWithUser(
+        universalId,
+        deviceId,
+        options
+      );
+
+      this.logger.info('Device associated successfully', {
+        universalId: universalId.substring(0, 8) + '...',
+        deviceId
+      });
+
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to associate device with user', {
+        error: error.message,
+        universalId,
+        deviceId
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Find universal ID by merchant user
+   * @param {string} merchantId - Merchant ID
+   * @param {string} merchantUserId - Merchant-specific user ID
+   * @returns {Promise<Object>} Universal ID data
+   */
+  async findUniversalIdByMerchantUser(merchantId, merchantUserId) {
+    try {
+      this.logger.debug('Finding universal ID by merchant user', {
+        merchantId,
+        merchantUserId
+      });
+
+      return await this.repository.findUniversalIdByMerchantUser(merchantId, merchantUserId);
+    } catch (error) {
+      this.logger.error('Failed to find universal ID by merchant user', {
+        error: error.message,
+        merchantId,
+        merchantUserId
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get all merchant associations for a user
+   * @param {string} universalId - Universal ID
+   * @returns {Promise<Array>} List of merchant associations
+   */
+  async getMerchantAssociations(universalId) {
+    try {
+      this.logger.debug('Getting merchant associations', {
+        universalId: universalId.substring(0, 8) + '...'
+      });
+
+      const associations = await this.repository.getMerchantAssociations(universalId);
+
+      this.logger.debug('Found merchant associations', {
+        universalId: universalId.substring(0, 8) + '...',
+        count: associations.length
+      });
+
+      return associations;
+    } catch (error) {
+      this.logger.error('Failed to get merchant associations', {
+        error: error.message,
+        universalId
+      });
+      throw error;
+    }
+  }
 }
 
 // Create and export singleton instance

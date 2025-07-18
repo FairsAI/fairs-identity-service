@@ -30,6 +30,7 @@ const validator = require('validator');
 const rateLimit = require('express-rate-limit');
 const { deviceFingerprintRepository } = require('../database/device-fingerprint-repository');
 const { crossMerchantIdentityRepository } = require('../database/cross-merchant-identity-repository');
+const { crossMerchantService } = require('../services/cross-merchant-service');
 const { verificationRepository } = require('../database/verification-repository');
 const { userRepository } = require('../repositories/user-repository');
 const { authService } = require('../auth/secure-authentication');
@@ -602,28 +603,29 @@ router.post('/identity/cross-merchant-lookup', async (req, res) => {
       timestamp
     });
     
-    // Fast lookup in cross-merchant identity table
-    const crossMerchantData = await crossMerchantIdentityRepository.getUserByUniversalId(universalId);
+    // Use service layer for user profile lookup
+    const userProfile = await crossMerchantService.getUserProfile(universalId, merchantId);
     
-    if (crossMerchantData && crossMerchantData.user_id) {
-      // Get merchant-specific data if available
-      const merchantData = await crossMerchantIdentityRepository.getMerchantData(universalId, merchantId);
-      
+    if (userProfile) {
       const responseTime = Date.now() - startTime;
       
       logger.info('Progressive SDK: Cross-merchant lookup successful', {
         universalId: universalId.substring(0, 8) + '...',
-        userId: crossMerchantData.user_id,
+        merchantId,
         responseTime
       });
       
       return res.json({
         success: true,
-        userId: crossMerchantData.user_id,
-        universalId,
+        universalId: userProfile.universalId,
         confidence: 0.9,
-        lastSeen: crossMerchantData.last_seen,
-        merchantHistory: merchantData ? [merchantData] : [],
+        email: userProfile.email,
+        phone: userProfile.phone,
+        verificationLevel: userProfile.verificationLevel,
+        isVerified: userProfile.isVerified,
+        merchantData: userProfile.merchantData,
+        deviceCount: userProfile.deviceCount,
+        lastSeen: userProfile.updatedAt,
         responseTime
       });
     }
@@ -677,67 +679,25 @@ router.post('/identity/capture', async (req, res) => {
       timestamp
     });
     
-    let userId, universalId;
-    
-    // Check if user exists by email
-    if (userData.email) {
-      const existingUser = await userRepository.getUserByEmail(userData.email);
-      
-      if (existingUser) {
-        userId = existingUser.id;
-        
-        // Get or create universal ID for existing user
-        const crossMerchantData = await crossMerchantIdentityRepository.getUserByUserId(userId);
-        if (crossMerchantData) {
-          universalId = crossMerchantData.universal_id;
-        } else {
-          // Create new universal ID for existing user
-          universalId = await crossMerchantIdentityRepository.createUniversalId(userId);
-        }
-        
-        logger.info('Progressive SDK: Existing user found', { userId, universalId: universalId.substring(0, 8) + '...' });
-      } else {
-        // Create new user
-        const newUser = await userRepository.createUser({
-          email: userData.email,
-          firstName: userData.firstName || userData.name?.split(' ')[0],
-          lastName: userData.lastName || userData.name?.split(' ').slice(1).join(' '),
-          phone: userData.phone
-        });
-        
-        userId = newUser.id;
-        
-        // Create universal ID for new user
-        universalId = await crossMerchantIdentityRepository.createUniversalId(userId);
-        
-        logger.info('Progressive SDK: New user created', { userId, universalId: universalId.substring(0, 8) + '...' });
-      }
-    } else {
-      return res.status(400).json({
-        success: false,
-        error: 'User email is required for identity capture'
-      });
-    }
-    
-    // Associate user with merchant
-    await crossMerchantIdentityRepository.associateMerchant(universalId, merchantId, {
-      lastSeen: new Date().toISOString(),
-      deviceInfo: deviceInfo || {}
-    });
+    // Use service layer for user registration
+    const registrationResult = await crossMerchantService.registerNewUser(
+      userData,
+      deviceInfo?.fingerprint,
+      merchantId
+    );
     
     const responseTime = Date.now() - startTime;
     
     logger.info('Progressive SDK: Identity capture successful', {
-      userId,
-      universalId: universalId.substring(0, 8) + '...',
+      universalId: registrationResult.universalId.substring(0, 8) + '...',
       merchantId,
       responseTime
     });
     
     res.json({
       success: true,
-      userId,
-      universalId,
+      userId: registrationResult.merchantUserId,
+      universalId: registrationResult.universalId,
       merchantId,
       responseTime
     });
@@ -1075,7 +1035,7 @@ router.get('/identity/device/:deviceId', async (req, res) => {
     
     const merchantId = req.query.merchantId;
     
-    const identity = await crossMerchantIdentityRepository.findUserByDevice(
+    const identity = await crossMerchantService.findUserByDevice(
       deviceId,
       { 
         merchantId,
@@ -1134,7 +1094,7 @@ router.get('/identity/device/:deviceId', async (req, res) => {
  */
 router.post('/identity/associate', validateRequired(['universalId', 'deviceId', 'merchantId']), async (req, res) => {
   try {
-    const association = await crossMerchantIdentityRepository.associateDeviceWithUser(
+    const association = await crossMerchantService.associateDeviceWithUser(
       req.body.universalId,
       parseInt(req.body.deviceId, 10),
       {
@@ -1180,24 +1140,39 @@ router.post('/identity/associate', validateRequired(['universalId', 'deviceId', 
  */
 router.post('/identity/merchant', validateRequired(['merchantId', 'merchantUserId']), async (req, res) => {
   try {
-    const isNewIdentity = !req.body.universalId;
-    
-    const result = await crossMerchantIdentityRepository.registerMerchantUser(
-      req.body.universalId,
-      req.body.merchantId,
-      req.body.merchantUserId
-    );
-    
-    res.json({
-      success: true,
-      universalId: result.identity_key,
-      isNewIdentity
-    });
+    if (req.body.universalId) {
+      // Link existing merchant user to universal identity
+      const result = await crossMerchantService.linkMerchantUser(
+        req.body.merchantUserId,
+        req.body.universalId,
+        req.body.merchantId
+      );
+      
+      res.json({
+        success: true,
+        universalId: req.body.universalId,
+        isNewIdentity: false,
+        ...result
+      });
+    } else {
+      // Register new user
+      const result = await crossMerchantService.registerNewUser(
+        { merchantUserId: req.body.merchantUserId },
+        null,
+        req.body.merchantId
+      );
+      
+      res.json({
+        success: true,
+        universalId: result.universalId,
+        isNewIdentity: true
+      });
+    }
   } catch (error) {
     logger.error('Error registering merchant user:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to register merchant user'
+      error: error.message || 'Failed to register merchant user'
     });
   }
 });
@@ -1243,7 +1218,7 @@ router.get('/identity/:universalId/merchants',
     const requestingMerchantId = req.merchantId;
     
     // ✅ SECURE: Strict authorization required (no fallbacks)
-    const userMerchantRelationship = await crossMerchantIdentityRepository.findUniversalIdByMerchantUser(
+    const userMerchantRelationship = await crossMerchantService.findUniversalIdByMerchantUser(
       requestingMerchantId, 
       universalId
     );
@@ -1265,7 +1240,7 @@ router.get('/identity/:universalId/merchants',
     }
     
     // ✅ SECURE: Get associations - merchant can only see their own plus limited cross-merchant data
-    const allAssociations = await crossMerchantIdentityRepository.getMerchantAssociations(universalId);
+    const allAssociations = await crossMerchantService.getMerchantAssociations(universalId);
     
     // Filter associations - requesting merchant gets full data, others get limited data
     const filteredAssociations = allAssociations.map(assoc => {
@@ -2100,21 +2075,90 @@ router.post('/device-fingerprint/register', async (req, res) => {
   });
   
   try {
-    const { deviceId, fingerprint, merchantId } = req.body;
+    const { deviceId, fingerprint, merchantId, sessionData } = req.body;
     
-    // Store device fingerprint in database (if you have the table)
-    // For now, we'll just respond with success
+    if (!fingerprint || !merchantId) {
+      return res.status(400).json({
+        success: false,
+        error: 'fingerprint and merchantId are required'
+      });
+    }
+    
+    // Use service layer for user recognition
+    const recognitionResult = await crossMerchantService.recognizeUser(
+      fingerprint, 
+      merchantId, 
+      sessionData || {}
+    );
     
     res.json({
       success: true,
-      deviceId: deviceId || `device_${Date.now()}`,
-      registered: true,
-      timestamp: new Date().toISOString(),
-      message: 'Device fingerprint registered successfully'
+      ...recognitionResult,
+      timestamp: new Date().toISOString()
     });
   } catch (error) {
     logger.error({
       message: 'Device fingerprint registration error',
+      error: error.message,
+      stack: error.stack
+    });
+    
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Recognition Sync Endpoint
+ * POST /api/recognition/sync
+ * 
+ * Sync user recognition data across devices and merchants
+ */
+router.post('/recognition/sync', async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    const { universalId, merchantId, deviceFingerprint, syncData } = req.body;
+    
+    if (!universalId || !merchantId) {
+      return res.status(400).json({
+        success: false,
+        error: 'universalId and merchantId are required'
+      });
+    }
+    
+    logger.info('Recognition sync request', {
+      universalId: universalId.substring(0, 8) + '...',
+      merchantId,
+      hasDeviceFingerprint: !!deviceFingerprint
+    });
+    
+    // Track user activity for sync
+    await crossMerchantService.trackUserActivity(
+      universalId, 
+      merchantId, 
+      'recognition_sync',
+      syncData || {}
+    );
+    
+    // Get updated user profile
+    const userProfile = await crossMerchantService.getUserProfile(universalId, merchantId);
+    
+    const responseTime = Date.now() - startTime;
+    
+    res.json({
+      success: true,
+      universalId,
+      profile: userProfile,
+      synced: true,
+      responseTime,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    logger.error('Recognition sync error', {
       error: error.message,
       stack: error.stack
     });
