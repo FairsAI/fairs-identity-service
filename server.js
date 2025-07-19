@@ -19,6 +19,7 @@ const enhancedSchemaRoutes = require('./src/routes/enhanced-schema-api');
 // const privacyRoutes = require('./src/routes/privacy');
 const userRightsRoutes = require('./src/routes/user-rights-api');
 const dataTransparencyRoutes = require('./src/routes/data-transparency-api');
+const { initializeRoutes: initializeRecognitionRoutes } = require('./src/routes/recognition-routes');
 
 // Create Express application
 const app = express();
@@ -73,6 +74,9 @@ app.use('/api/user-rights', userRightsRoutes);
 // Data Transparency API for processing transparency
 app.use('/api/data-transparency', dataTransparencyRoutes);
 
+// Recognition and verification routes (initialized with dependencies)
+let recognitionRoutes = null;
+
 // 404 handler
 app.use('*', (req, res) => {
   res.status(404).json({
@@ -99,36 +103,45 @@ app.use((error, req, res, next) => {
 });
 
 /**
- * Database Connection Verification
- * Simple connection check without strict validation
+ * Database Connection Verification and Service Initialization
  */
-async function verifyDatabaseConnection() {
+async function initializeServices() {
   try {
+    // Initialize database connection
     const { dbConnection } = require('./src/database/db-connection');
     
     // Simple connection test
     const result = await dbConnection.query('SELECT 1 as connection_test');
-    
     console.log('✅ Database connection verified - Simple test passed');
     
     // Optional: Try to list Enhanced Schema tables (non-blocking)
     try {
-    const tableCheck = await dbConnection.query(`
-      SELECT table_name 
-      FROM information_schema.tables 
-      WHERE table_schema = 'identity_service' 
-      AND table_name IN ('user_payment_methods', 'user_addresses')
-      ORDER BY table_name
-    `);
-    
-    console.log('🎯 Enhanced Schema tables found:', tableCheck.map(r => r.table_name));
+      const tableCheck = await dbConnection.query(`
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'identity_service' 
+        AND table_name IN ('user_payment_methods', 'user_addresses')
+        ORDER BY table_name
+      `);
+      
+      console.log('🎯 Enhanced Schema tables found:', tableCheck.map(r => r.table_name));
     } catch (tableError) {
       console.log('⚠️ Could not check Enhanced Schema tables:', tableError.message);
     }
+
+    // Initialize Redis connection
+    const redisConnection = require('./src/database/redis-connection');
+    await redisConnection.initialize();
+    console.log('✅ Redis connection established');
+
+    // Initialize recognition routes with database and Redis dependencies
+    recognitionRoutes = initializeRecognitionRoutes(dbConnection, redisConnection);
+    app.use('/api/identity', recognitionRoutes);
+    console.log('✅ Recognition routes initialized');
     
   } catch (error) {
-    console.error('❌ Database verification failed:', error.message);
-    console.log('⚠️ Continuing startup - database connection will be attempted per request');
+    console.error('❌ Service initialization failed:', error.message);
+    console.log('⚠️ Continuing startup - some features may be unavailable');
   }
 }
 
@@ -147,8 +160,8 @@ const server = app.listen(PORT, HOST, async () => {
   console.log(`🚀 Fairs Identity Service running on http://${HOST}:${PORT}`);
   console.log(`📊 Health check available at http://${HOST}:${PORT}/health`);
   
-  // Verify database connection after server starts
-  await verifyDatabaseConnection();
+  // Initialize all services after server starts
+  await initializeServices();
 });
 
 // ===========================================
@@ -182,6 +195,17 @@ function gracefulShutdown(signal) {
       }
     } catch (error) {
       logger.warn('⚠️ Database cleanup failed:', error.message);
+    }
+
+    // Close Redis connection
+    try {
+      const redisConnection = require('./src/database/redis-connection');
+      if (redisConnection) {
+        await redisConnection.disconnect();
+        logger.info('✅ Redis connection closed');
+      }
+    } catch (error) {
+      logger.warn('⚠️ Redis cleanup failed:', error.message);
     }
     
     process.exit(0);
