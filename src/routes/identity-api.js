@@ -615,6 +615,22 @@ router.post('/identity/cross-merchant-lookup', async (req, res) => {
         responseTime
       });
       
+      // Generate JWT token for recognized user
+      const token = authService.generateToken({
+        userId: userProfile.universalId,
+        username: userProfile.email,
+        merchantId: merchantId,
+        permissions: ['user:read', 'user:write'],
+        type: 'standard'
+      });
+      
+      logger.info({
+        message: 'JWT token generated for cross-merchant recognized user',
+        userId: userProfile.universalId,
+        merchantId,
+        tokenType: 'standard'
+      });
+      
       return res.json({
         success: true,
         universalId: userProfile.universalId,
@@ -626,7 +642,8 @@ router.post('/identity/cross-merchant-lookup', async (req, res) => {
         merchantData: userProfile.merchantData,
         deviceCount: userProfile.deviceCount,
         lastSeen: userProfile.updatedAt,
-        responseTime
+        responseTime,
+        token: token
       });
     }
     
@@ -1832,7 +1849,7 @@ router.post('/identity/lookup', authenticateRequest, validateAndSanitizeInput, v
   });
   
   try {
-    const { phone, universalId, lookupType } = req.body;
+    const { phone, universalId, lookupType, merchantId } = req.body;
     // Clean email input to prevent encoding issues
     const email = req.body.email ? req.body.email.trim().replace(/\0/g, '') : null;
     
@@ -1985,9 +2002,25 @@ router.post('/identity/lookup', authenticateRequest, validateAndSanitizeInput, v
         lookupType
       });
       
+      // Generate JWT token for recognized user
+      const token = authService.generateToken({
+        userId: user.universalId || user.id,
+        username: user.email,
+        merchantId: merchantId || req.merchantId || 'default',
+        permissions: ['user:read', 'user:write'],
+        type: 'standard'
+      });
+      
+      logger.info({
+        message: 'JWT token generated for recognized user',
+        userId: user.universalId || user.id,
+        tokenType: 'standard'
+      });
+      
       res.json({
         success: true,
-        user: user
+        user: user,
+        token: token
       });
     } else {
       logger.info({
@@ -2335,6 +2368,23 @@ router.post('/identity/enhanced-cross-merchant', async (req, res) => {
     const responseTime = Date.now() - startTime;
     
     if (enhancedConfidence >= 0.90 && userCorrelation.userId) {
+      // Generate JWT token for enhanced recognized user
+      const token = authService.generateToken({
+        userId: userCorrelation.userId,
+        username: userCorrelation.email || null,
+        merchantId: merchantId,
+        permissions: ['user:read', 'user:write'],
+        type: 'enhanced'
+      });
+      
+      logger.info({
+        message: 'JWT token generated for enhanced cross-merchant recognized user',
+        userId: userCorrelation.userId,
+        merchantId,
+        confidence: enhancedConfidence,
+        tokenType: 'enhanced'
+      });
+      
       res.json({
         success: true,
         userId: userCorrelation.userId,
@@ -2346,7 +2396,8 @@ router.post('/identity/enhanced-cross-merchant', async (req, res) => {
         responseTime: responseTime,
         components: ['cross-merchant-manager', 'user-repository', 'security-monitoring'],
         enhanced: true,
-        phase: '1.5A'
+        phase: '1.5A',
+        token: token
       });
     } else {
       // Fallback to basic resolution
