@@ -153,4 +153,15 @@ class FeatureFlagService {
 }
 
 // Export singleton instance
-module.exports = new FeatureFlagService();
+const instance = new FeatureFlagService();
+
+// For testing - allow reinitialization
+if (process.env.NODE_ENV === 'test') {
+  instance._reinitialize = () => {
+    const newInstance = new FeatureFlagService();
+    Object.assign(instance, newInstance);
+    return instance;
+  };
+}
+
+module.exports = instance;

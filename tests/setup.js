@@ -4,6 +4,19 @@
 // Set test environment
 process.env.NODE_ENV = 'test';
 
+// Mock Phase 1 environment variables
+process.env.ENABLE_AUTO_RECOGNITION = 'true';
+process.env.HIGH_CONFIDENCE_THRESHOLD = '80';
+process.env.MEDIUM_CONFIDENCE_THRESHOLD = '50';
+process.env.DEVICE_TRUST_THRESHOLD = '70';
+process.env.AWS_REGION = 'us-east-1';
+process.env.AWS_ACCESS_KEY_ID = 'test-access-key';
+process.env.AWS_SECRET_ACCESS_KEY = 'test-secret-key';
+process.env.AWS_SES_FROM_EMAIL = 'test@example.com';
+process.env.COMMERCE_PLATFORM_URL = 'http://test-commerce-platform:3000';
+process.env.REDIS_HOST = 'localhost';
+process.env.REDIS_PORT = '6379';
+
 // Mock console methods to reduce noise in tests
 global.console = {
   ...console,
