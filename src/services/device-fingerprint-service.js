@@ -123,8 +123,8 @@ class DeviceFingerprintService {
     if (features.webglVendor && features.webglRenderer) score += 15;
     
     // Medium entropy features
-    if (features.fonts.length > 10) score += 10;
-    if (features.plugins.length > 0) score += 10;
+    if (features.fonts && features.fonts.length > 10) score += 10;
+    if (features.plugins && features.plugins.length > 0) score += 10;
     if (features.screenResolution) score += 10;
     if (features.timezone) score += 5;
     
@@ -146,6 +146,11 @@ class DeviceFingerprintService {
       'Palatino', 'Garamond', 'Bookman', 'Comic Sans MS',
       'Trebuchet MS', 'Arial Black', 'Impact'
     ];
+    
+    // Handle non-array inputs gracefully
+    if (!Array.isArray(fonts)) {
+      return [];
+    }
     
     return fonts.filter(font => commonFonts.includes(font)).sort();
   }
@@ -187,20 +192,31 @@ class DeviceFingerprintService {
       fonts: 5
     };
 
-    // Compare each feature
+    // Compare each feature - only count weights for features that exist in both
     for (const [feature, weight] of Object.entries(weights)) {
-      totalWeight += weight;
-      
-      if (features1[feature] === features2[feature]) {
-        matchScore += weight;
-      } else if (Array.isArray(features1[feature]) && Array.isArray(features2[feature])) {
-        // For arrays, calculate percentage of matching elements
-        const arr1 = features1[feature];
-        const arr2 = features2[feature];
-        const matches = arr1.filter(item => arr2.includes(item)).length;
-        const similarity = matches / Math.max(arr1.length, arr2.length);
-        matchScore += weight * similarity;
+      // Only compare if both fingerprints have this feature
+      if (features1[feature] !== undefined && features2[feature] !== undefined) {
+        totalWeight += weight;
+        
+        if (features1[feature] === features2[feature]) {
+          matchScore += weight;
+        } else if (Array.isArray(features1[feature]) && Array.isArray(features2[feature])) {
+          // For arrays, calculate percentage of matching elements
+          const arr1 = features1[feature];
+          const arr2 = features2[feature];
+          const matches = arr1.filter(item => arr2.includes(item)).length;
+          const maxLength = Math.max(arr1.length, arr2.length);
+          if (maxLength > 0) {
+            const similarity = matches / maxLength;
+            matchScore += weight * similarity;
+          }
+        }
       }
+    }
+
+    // Handle case where no comparable features exist
+    if (totalWeight === 0) {
+      return 0;
     }
 
     return Math.round((matchScore / totalWeight) * 100);

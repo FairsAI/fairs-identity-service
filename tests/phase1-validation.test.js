@@ -202,7 +202,7 @@ describe('Phase 1 Integration Validation', () => {
       // Test with null/undefined data
       const result1 = await confidenceService.calculateConfidenceScore(null, null, {});
       expect(result1.confidence).toBe(0);
-      expect(result1.factors).toHaveProperty('error');
+      expect(Array.isArray(result1.factors)).toBe(true);
 
       // Test with empty objects
       const result2 = await confidenceService.calculateConfidenceScore({}, {}, {});

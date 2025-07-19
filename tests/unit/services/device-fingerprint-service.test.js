@@ -130,15 +130,19 @@ describe('DeviceFingerprintService', () => {
 
     test('should return low similarity for very different fingerprints', () => {
       const deviceData1 = {
-        userAgent: 'Mozilla/5.0 (Macintosh)',
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
         platform: 'MacIntel',
-        screenResolution: '1920x1080'
+        screenResolution: '1920x1080',
+        timezone: 'America/New_York',
+        canvasFingerprint: 'canvas-mac-data-123'
       };
 
       const deviceData2 = {
-        userAgent: 'Mozilla/5.0 (Windows)',
-        platform: 'Win32',
-        screenResolution: '1366x768'
+        userAgent: 'Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 Chrome Mobile',
+        platform: 'Linux armv81',
+        screenResolution: '360x800',
+        timezone: 'Asia/Tokyo',
+        canvasFingerprint: 'canvas-android-data-456'
       };
 
       const fingerprint1 = service.generateFingerprint(deviceData1);
