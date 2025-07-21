@@ -1,0 +1,44 @@
+FROM node:18-alpine
+
+# Install curl for health checks
+RUN apk add --no-cache curl
+
+# Set working directory
+WORKDIR /app
+
+# Copy shared modules first
+COPY ./shared/security-middleware /shared/security-middleware
+COPY ./shared/uuid-utils /shared/uuid-utils
+COPY ./shared/security-config /shared/security-config
+COPY ./shared-utils /shared-utils
+
+# Copy identity service package files
+COPY ./fairs-identity-service/package*.json ./
+
+# Install build dependencies for native modules
+RUN apk add --no-cache python3 make g++
+
+# Install production dependencies
+RUN npm install --only=production && npm rebuild bcrypt --build-from-source && npm cache clean --force
+
+# Remove build dependencies
+RUN apk del python3 make g++
+
+# Copy identity service application code
+COPY ./fairs-identity-service .
+
+# Create necessary directories
+RUN mkdir -p logs && chown -R node:node logs
+
+# Switch to non-root user
+USER node
+
+# Expose service port
+EXPOSE 3000
+
+# Health check for identity service
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD curl -f http://localhost:3000/health || exit 1
+
+# Start the service
+CMD ["node", "server.js"]

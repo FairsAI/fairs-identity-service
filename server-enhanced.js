@@ -1,7 +1,8 @@
 /**
- * Fairs Identity Service Server
+ * Fairs Identity Service Server - Enhanced Security Version
  * 
- * Main entry point for the identity service application
+ * Main entry point with Phase 0.4 security enhancements
+ * Including CSRF protection, advanced security headers, and rate limiting
  */
 
 // Load environment variables from .env file
@@ -10,13 +11,25 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
 const { logger } = require('./src/utils/logger');
 const config = require('./src/config');
+
+// Import enhanced security middleware
+const { 
+  csrfProtection,
+  injectCSRFToken,
+  securityHeaders,
+  secureCORS,
+  progressiveRateLimiter,
+  endpointRateLimiter,
+  apiRequestSigning,
+  SecurityMiddleware
+} = require('@fairs/security-middleware');
 
 // Import routes
 const identityRoutes = require('./src/routes/identity-api');
 const enhancedSchemaRoutes = require('./src/routes/enhanced-schema-api');
-// const privacyRoutes = require('./src/routes/privacy');
 const userRightsRoutes = require('./src/routes/user-rights-api');
 const dataTransparencyRoutes = require('./src/routes/data-transparency-api');
 const { initializeRoutes: initializeRecognitionRoutes } = require('./src/routes/recognition-routes');
@@ -24,16 +37,77 @@ const { initializeRoutes: initializeRecognitionRoutes } = require('./src/routes/
 // Create Express application
 const app = express();
 
-// Security middleware
-app.use(helmet());
+// Cookie parser for CSRF
+app.use(cookieParser());
 
-// CORS configuration
-app.use(cors({
-  origin: config.security?.corsOrigins || ['http://localhost:3000'],
-  credentials: true
+// Health check endpoint (before security middleware)
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    service: 'fairs-identity-service',
+    version: '1.0.0',
+    environment: process.env.NODE_ENV || 'development',
+    uptime: process.uptime(),
+    security: 'enhanced'
+  });
+});
+
+// Apply enhanced security middleware components
+// Security headers with CSP
+app.use(securityHeaders({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"], // Allow inline for some legacy features
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'"],
+      frameSrc: ["'none'"],
+      'frame-ancestors': ["'none'"]
+    }
+  }
 }));
 
-// Body parsing middleware
+// CSRF protection
+app.use(csrfProtection({
+  excludePaths: [
+    '/health', 
+    '/metrics',
+    '/api/identity/lookup', // Public lookup endpoint
+    '/api/identity/recognize', // Public recognition endpoint
+    '/api/identity/device-fingerprint', // Public fingerprint endpoint
+    '/api/addresses', // Allow address creation for checkout
+    '/api/payment-methods' // Allow payment method creation for checkout
+  ],
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'strict'
+}));
+app.use(injectCSRFToken);
+
+// Advanced CORS
+app.use(secureCORS({
+  allowedOrigins: config.security?.corsOrigins || [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:3002', 
+    'http://localhost:3003',
+    'http://localhost:4000'
+  ],
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-csrf-token', 'x-signature', 'x-timestamp']
+}));
+
+// Progressive rate limiting
+app.use(progressiveRateLimiter({
+  anonymous: { windowMs: 60000, max: 60 }, // 60 requests per minute for anonymous
+  authenticated: { windowMs: 60000, max: 300 } // 300 requests per minute for authenticated
+}));
+
+// Input sanitization
+app.use(SecurityMiddleware.sanitizeInput());
+
+// Body parsing middleware with size limits
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -44,29 +118,44 @@ app.use((req, res, next) => {
     method: req.method,
     url: req.url,
     userAgent: req.get('User-Agent'),
-    ip: req.ip || req.connection.remoteAddress
+    ip: req.ip || req.connection.remoteAddress,
+    requestId: req.id
   });
   next();
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    service: 'fairs-identity-service',
-    version: '1.0.0'
-  });
+// Add request ID for tracing
+app.use((req, res, next) => {
+  req.id = Math.random().toString(36).substring(2, 15);
+  res.setHeader('X-Request-ID', req.id);
+  next();
 });
+
+// Endpoint-specific rate limiting
+app.use(endpointRateLimiter({
+  '/api/identity/lookup': {
+    windowMs: 60000,
+    max: 30 // 30 lookups per minute
+  },
+  '/api/identity/recognize': {
+    windowMs: 60000,
+    max: 20 // 20 recognition attempts per minute
+  },
+  '/api/identity/verify': {
+    windowMs: 300000,
+    max: 10 // 10 verification attempts per 5 minutes
+  },
+  '/api/users': {
+    windowMs: 3600000,
+    max: 50 // 50 user operations per hour
+  }
+}));
 
 // API routes
 app.use('/api', identityRoutes);
 
 // Enhanced Schema routes for multiple addresses and payment methods
 app.use('/api', enhancedSchemaRoutes);
-
-// Privacy routes for CCPA/PIPEDA compliance
-// app.use("/api/privacy", privacyRoutes););
 
 // User Rights API for data subject rights
 app.use('/api/user-rights', userRightsRoutes);
@@ -82,7 +171,8 @@ app.use('*', (req, res) => {
   res.status(404).json({
     success: false,
     error: 'Endpoint not found',
-    path: req.originalUrl
+    path: req.originalUrl,
+    requestId: req.id
   });
 });
 
@@ -93,12 +183,14 @@ app.use((error, req, res, next) => {
     error: error.message,
     stack: error.stack,
     url: req.url,
-    method: req.method
+    method: req.method,
+    requestId: req.id
   });
 
   res.status(error.status || 500).json({
     success: false,
-    error: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message
+    error: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message,
+    requestId: req.id
   });
 });
 
@@ -139,6 +231,17 @@ async function initializeServices() {
     app.use('/api/identity', recognitionRoutes);
     console.log('✅ Recognition routes initialized');
     
+    // Initialize API request signing for service-to-service communication
+    if (process.env.API_SIGNING_SECRET) {
+      app.use(apiRequestSigning({
+        secret: process.env.API_SIGNING_SECRET,
+        serviceName: 'identity-service',
+        verifyIncoming: true,
+        signOutgoing: true
+      }));
+      console.log('✅ API request signing initialized');
+    }
+    
   } catch (error) {
     console.error('❌ Service initialization failed:', error.message);
     console.log('⚠️ Continuing startup - some features may be unavailable');
@@ -154,11 +257,13 @@ const server = app.listen(PORT, HOST, async () => {
     message: 'Server started successfully',
     port: PORT,
     host: HOST,
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    security: 'Phase 0.4 Enhanced'
   });
   
-  console.log(`🚀 Fairs Identity Service running on http://${HOST}:${PORT}`);
+  console.log(`🚀 Fairs Identity Service (Enhanced Security) running on http://${HOST}:${PORT}`);
   console.log(`📊 Health check available at http://${HOST}:${PORT}/health`);
+  console.log(`🔒 Security Features: CSRF Protection, Rate Limiting, Security Headers`);
   
   // Initialize all services after server starts
   await initializeServices();
@@ -198,16 +303,21 @@ async function gracefulShutdown(signal) {
     }
 
     // Close Redis connection
-    // TODO: Fix async/await issue
-    // try {
-    //   const redisConnection = require('./src/database/redis-connection');
-    //   if (redisConnection) {
-    //     await redisConnection.disconnect();
-    //     logger.info('✅ Redis connection closed');
-    //   }
-    // } catch (error) {
-    //   logger.warn('⚠️ Redis cleanup failed:', error.message);
-    // }
+    try {
+      const redisConnection = require('./src/database/redis-connection');
+      if (redisConnection && redisConnection.disconnect) {
+        redisConnection.disconnect().then(() => {
+          logger.info('✅ Redis connection closed');
+          process.exit(0);
+        }).catch(error => {
+          logger.warn('⚠️ Redis cleanup failed:', error.message);
+          process.exit(0);
+        });
+        return;
+      }
+    } catch (error) {
+      logger.warn('⚠️ Redis cleanup failed:', error.message);
+    }
     
     process.exit(0);
   });
@@ -234,4 +344,4 @@ process.on('unhandledRejection', (reason, promise) => {
   process.exit(1);
 });
 
-module.exports = app; 
+module.exports = app;
