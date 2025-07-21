@@ -9,7 +9,9 @@ const { dbConnection } = require('../database/db-connection');
 
 class EnhancedIdentityAPIClient {
   constructor(options = {}) {
-    this.baseURL = options.baseURL || 'http://localhost:3002';
+    // SECURITY: All service communication MUST go through API Orchestrator
+    const orchestratorUrl = process.env.API_ORCHESTRATOR_URL || 'http://fairs-api-orchestrator:4000';
+    this.baseURL = options.baseURL || `${orchestratorUrl}/api/v1/identity`;
     this.apiKey = this.validateApiKey(options.apiKey || process.env.IDENTITY_SERVICE_API_KEY);
     this.timeout = options.timeout || 30000;
     this.logger = logger.child({ service: 'enhanced-identity-api-client' });
