@@ -35,7 +35,13 @@ class RedisConnection {
         port: redisConfig.port
       });
 
-      this.client = Redis.createClient(redisConfig);
+      this.client = Redis.createClient({
+        socket: {
+          host: redisConfig.host,
+          port: redisConfig.port
+        },
+        password: redisConfig.password
+      });
 
       // Set up event handlers
       this.client.on('connect', () => {
