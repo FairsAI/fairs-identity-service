@@ -40,6 +40,12 @@ router.post('/recognize', [
     .isObject()
     .withMessage('Behavioral data must be an object')
 ], (req, res) => {
+  if (!recognitionController) {
+    return res.status(500).json({
+      success: false,
+      error: 'Recognition service not initialized'
+    });
+  }
   recognitionController.recognizeUser(req, res);
 });
 
@@ -82,6 +88,12 @@ router.post('/verify/send', [
     .isLength({ max: 100 })
     .withMessage('Reason must be a string with max 100 characters')
 ], (req, res) => {
+  if (!recognitionController) {
+    return res.status(500).json({
+      success: false,
+      error: 'Recognition service not initialized'
+    });
+  }
   recognitionController.sendVerificationCode(req, res);
 });
 
@@ -106,6 +118,12 @@ router.post('/verify/check', [
     .isObject()
     .withMessage('Device fingerprint must be an object')
 ], (req, res) => {
+  if (!recognitionController) {
+    return res.status(500).json({
+      success: false,
+      error: 'Recognition service not initialized'
+    });
+  }
   recognitionController.verifyCode(req, res);
 });
 
@@ -123,6 +141,12 @@ router.get('/confidence/:userId', [
     .isString()
     .withMessage('Device fingerprint must be a JSON string')
 ], (req, res) => {
+  if (!recognitionController) {
+    return res.status(500).json({
+      success: false,
+      error: 'Recognition service not initialized'
+    });
+  }
   recognitionController.getConfidenceScore(req, res);
 });
 
@@ -147,6 +171,12 @@ router.post('/device/link', [
     .isBoolean()
     .withMessage('Trusted must be a boolean')
 ], (req, res) => {
+  if (!recognitionController) {
+    return res.status(500).json({
+      success: false,
+      error: 'Recognition service not initialized'
+    });
+  }
   recognitionController.linkDevice(req, res);
 });
 
@@ -159,6 +189,12 @@ router.get('/device-graph/:userId', [
     .isUUID()
     .withMessage('Valid user ID is required')
 ], (req, res) => {
+  if (!recognitionController) {
+    return res.status(500).json({
+      success: false,
+      error: 'Recognition service not initialized'
+    });
+  }
   recognitionController.getDeviceGraph(req, res);
 });
 
@@ -193,6 +229,12 @@ router.post('/behavioral/update', [
       return true;
     })
 ], (req, res) => {
+  if (!recognitionController) {
+    return res.status(500).json({
+      success: false,
+      error: 'Recognition service not initialized'
+    });
+  }
   recognitionController.updateBehavioralProfile(req, res);
 });
 
@@ -206,6 +248,12 @@ router.get('/stats', [
     .isIn(['last_hour', 'last_24h', 'last_week', 'last_month'])
     .withMessage('Invalid timeframe specified')
 ], (req, res) => {
+  if (!recognitionController) {
+    return res.status(500).json({
+      success: false,
+      error: 'Recognition service not initialized'
+    });
+  }
   recognitionController.getStats(req, res);
 });
 
