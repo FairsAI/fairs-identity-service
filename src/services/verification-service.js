@@ -21,7 +21,7 @@ class VerificationService {
     this.codeExpiry = 10 * 60; // 10 minutes in seconds
     this.maxAttempts = 3;
     this.cooldownPeriod = 60; // 1 minute between sends
-    this.commercePlatformUrl = process.env.COMMERCE_PLATFORM_URL || 'http://commerce-platform:3000';
+    this.apiOrchestratorUrl = process.env.API_ORCHESTRATOR_URL || 'http://fairs-api-orchestrator:4000';
   }
 
   /**
@@ -224,7 +224,7 @@ class VerificationService {
   }
 
   /**
-   * Send SMS verification code via commerce-platform Twilio
+   * Send SMS verification code via API Orchestrator to commerce-platform Twilio
    */
   async sendSMSCode(phone, code, metadata = {}) {
     try {
@@ -239,7 +239,7 @@ class VerificationService {
       };
 
       const response = await axios.post(
-        `${this.commercePlatformUrl}/api/sms/send`,
+        `${this.apiOrchestratorUrl}/api/v1/commerce/sms/send`,
         twilioPayload,
         {
           timeout: 10000,

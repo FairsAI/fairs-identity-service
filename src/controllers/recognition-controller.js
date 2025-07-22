@@ -227,13 +227,26 @@ class RecognitionController {
       }
 
       // Get user from database
-      const user = await this.recognitionService.findUserByIdentifier(userId);
-      if (!user) {
+      // For confidence scoring, we need to find user by ID not identifier
+      // This is a temporary fix - ideally we'd have a separate method
+      if (!this.database || !this.database.query) {
+        return res.status(500).json({
+          success: false,
+          error: 'Database not initialized'
+        });
+      }
+      
+      const userQuery = 'SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL LIMIT 1';
+      const result = await this.database.query(userQuery, [userId]);
+      
+      if (result.rows.length === 0) {
         return res.status(404).json({
           success: false,
           error: 'User not found'
         });
       }
+      
+      const user = result.rows[0];
 
       const context = {
         ipAddress: req.ip,
@@ -411,6 +424,14 @@ class RecognitionController {
    */
   async getStats(req, res) {
     try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          errors: errors.array()
+        });
+      }
+
       const { timeframe } = req.query;
 
       const [recognitionStats, verificationStats] = await Promise.all([

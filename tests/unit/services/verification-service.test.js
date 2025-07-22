@@ -98,7 +98,7 @@ describe('VerificationService', () => {
       expect(result.channel).toBe('sms');
       expect(result.recipient).toBe('+123****90');
       expect(axios.post).toHaveBeenCalledWith(
-        'http://test-commerce-platform:3000/api/sms/send',
+        'http://test-api-orchestrator:4000/api/v1/commerce/sms/send',
         expect.objectContaining({
           to: '+1234567890',
           message: expect.stringContaining('Your Fairs verification code is:')
