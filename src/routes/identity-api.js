@@ -3037,4 +3037,117 @@ router.post('/convert-guest-to-member',
   }
 );
 
+/**
+ * Get user addresses
+ * GET /api/identity/users/:userId/addresses
+ */
+router.get('/users/:userId/addresses', authenticateRequest, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    logger.info('Getting user addresses', { userId });
+
+    // Get addresses from repository
+    const addressRepo = require('../repositories/user-address-repository');
+    const addresses = await addressRepo.getUserAddresses(userId);
+
+    logger.info('Retrieved user addresses', { 
+      userId, 
+      count: addresses.length 
+    });
+
+    res.json({
+      success: true,
+      addresses: addresses || []
+    });
+  } catch (error) {
+    logger.error('Failed to get user addresses', {
+      error: error.message,
+      userId: req.params.userId,
+      stack: error.stack
+    });
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get user addresses'
+    });
+  }
+});
+
+/**
+ * Get specific user address
+ * GET /api/identity/users/:userId/addresses/:addressId
+ */
+router.get('/users/:userId/addresses/:addressId', authenticateRequest, async (req, res) => {
+  try {
+    const { userId, addressId } = req.params;
+    logger.info('Getting user address', { userId, addressId });
+
+    const UserAddressRepository = require('../repositories/user-address-repository');
+    const addressRepo = new UserAddressRepository();
+    const address = await addressRepo.getAddressById(addressId, userId);
+
+    if (!address) {
+      return res.status(404).json({
+        success: false,
+        error: 'Address not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      address
+    });
+  } catch (error) {
+    logger.error('Failed to get user address', {
+      error: error.message,
+      userId: req.params.userId,
+      addressId: req.params.addressId,
+      stack: error.stack
+    });
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get user address'
+    });
+  }
+});
+
+/**
+ * Create new user address
+ * POST /api/identity/users/:userId/addresses
+ */
+router.post('/users/:userId/addresses', authenticateRequest, validateAndSanitizeInput, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const addressData = req.body;
+
+    logger.info('Creating user address', { userId, addressData });
+
+    const UserAddressRepository = require('../repositories/user-address-repository');
+    const addressRepo = new UserAddressRepository();
+    const newAddress = await addressRepo.saveAddress(userId, addressData);
+
+    logger.info('Created user address', { 
+      userId, 
+      addressId: newAddress.id 
+    });
+
+    res.status(201).json({
+      success: true,
+      address: newAddress
+    });
+  } catch (error) {
+    logger.error('Failed to create user address', {
+      error: error.message,
+      userId: req.params.userId,
+      stack: error.stack
+    });
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create user address'
+    });
+  }
+});
+
 module.exports = router; 
