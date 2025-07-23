@@ -13,7 +13,7 @@
     "@aws-sdk/client-ses": "^3.848.0",
     "@fairs/shared-utils": "file:../shared-utils",
     "axios": "^1.11.0",
-    "bcrypt": "^5.1.0",
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
@@ -27,7 +27,10 @@
     "redis": "^4.7.1",
     "uuid": "^11.1.0",
     "validator": "^13.15.15",
-    "winston": "^3.17.0"
+    "winston": "^3.17.0",
+    "morgan": "^1.10.0",
+    "@fairs/security-middleware": "file:../shared/security-middleware",
+    "cookie-parser": "^1.4.6"
   },
   "devDependencies": {
     "jest": "^29.7.0",

@@ -15,14 +15,8 @@ COPY ./shared-utils /shared-utils
 # Copy identity service package files
 COPY ./fairs-identity-service/package*.json ./
 
-# Install build dependencies for native modules
-RUN apk add --no-cache python3 make g++
-
-# Install production dependencies
-RUN npm install --only=production && npm rebuild bcrypt --build-from-source && npm cache clean --force
-
-# Remove build dependencies
-RUN apk del python3 make g++
+# Install production dependencies (bcryptjs doesn't need compilation)
+RUN npm install --only=production && npm cache clean --force
 
 # Copy identity service application code
 COPY ./fairs-identity-service .
@@ -40,5 +34,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:3000/health || exit 1
 
-# Start the service
-CMD ["node", "server.js"]
+# Start the enhanced service
+CMD ["node", "server-enhanced.js"]

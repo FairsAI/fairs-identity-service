@@ -6,7 +6,7 @@
 
 const { dbConnection } = require('../database/db-connection');
 const { logger } = require('../utils/logger');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 
 class UserRepository {
   /**
