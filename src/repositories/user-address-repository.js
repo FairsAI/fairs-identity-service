@@ -245,7 +245,7 @@ class UserAddressRepository {
    * Set address as default for shipping, billing, or both
    */
   async setAsDefault(addressId, userId, defaultType = 'both') {
-    // First get the address to know its type
+    // First get the address
     const address = await this.getAddressById(addressId, userId);
     if (!address) {
       throw new Error('Address not found');
@@ -254,21 +254,19 @@ class UserAddressRepository {
     try {
       let updateFields = [];
       
-      // Determine what defaults to set based on address type and request
-      if ((defaultType === 'shipping' || defaultType === 'both') && 
-          (address.address_type === 'shipping' || address.address_type === 'both')) {
+      // Allow any address to be set as default - no type restrictions
+      if (defaultType === 'shipping' || defaultType === 'both') {
         await this.unsetDefaultShippingAddresses(userId);
         updateFields.push('is_default_shipping = true');
       }
       
-      if ((defaultType === 'billing' || defaultType === 'both') && 
-          (address.address_type === 'billing' || address.address_type === 'both')) {
+      if (defaultType === 'billing' || defaultType === 'both') {
         await this.unsetDefaultBillingAddresses(userId);
         updateFields.push('is_default_billing = true');
       }
 
       if (updateFields.length === 0) {
-        throw new Error(`Cannot set address as default ${defaultType} - address type is ${address.address_type}`);
+        throw new Error(`Invalid defaultType: ${defaultType}`);
       }
 
       // Set this address as default
@@ -404,6 +402,38 @@ class UserAddressRepository {
       return defaults;
     } catch (error) {
       logger.error('Failed to get default addresses:', error);
+      throw error;
+    }
+  }
+  /**
+   * Update address owner from session to user
+   * Used when converting guest checkout to registered user
+   */
+  async updateAddressOwner(addressId, fromUserId, toUserId) {
+    const query = `
+      UPDATE identity_service.user_addresses 
+      SET user_id = $1, updated_at = NOW()
+      WHERE id = $2 AND user_id = $3
+      RETURNING *;
+    `;
+
+    try {
+      const result = await this.db.query(query, [toUserId, addressId, fromUserId]);
+      
+      if (result.length === 0) {
+        throw new Error('Address not found or not owned by fromUserId');
+      }
+
+      logger.info({
+        message: 'Address owner updated successfully',
+        addressId,
+        fromUserId,
+        toUserId
+      });
+      
+      return result[0];
+    } catch (error) {
+      logger.error('Failed to update address owner:', error);
       throw error;
     }
   }
