@@ -1,0 +1,187 @@
+{
+  "users": {
+    "required": ["id", "email"],
+    "optional": ["first_name", "last_name", "phone", "created_at", "updated_at"],
+    "readOnly": ["id", "created_at"],
+    "dataTypes": {
+      "id": "string",
+      "email": "string",
+      "first_name": "string",
+      "last_name": "string",
+      "phone": "string",
+      "created_at": "date",
+      "updated_at": "date"
+    },
+    "constraints": {
+      "email": {
+        "minLength": 5,
+        "maxLength": 254
+      },
+      "first_name": {
+        "minLength": 1,
+        "maxLength": 50
+      },
+      "last_name": {
+        "minLength": 1,
+        "maxLength": 50
+      },
+      "phone": {
+        "minLength": 7,
+        "maxLength": 20
+      }
+    }
+  },
+  
+  "user_addresses": {
+    "required": ["id", "user_id", "address_type", "address_line_1", "city", "state_province", "postal_code", "country_code"],
+    "optional": ["label", "first_name", "last_name", "company", "address_line_2", "phone", "delivery_instructions", "is_default_shipping", "is_default_billing", "created_at", "updated_at"],
+    "readOnly": ["id", "created_at"],
+    "dataTypes": {
+      "id": "uuid",
+      "user_id": "integer",
+      "address_type": "string",
+      "label": "string",
+      "first_name": "string",
+      "last_name": "string",
+      "company": "string",
+      "address_line_1": "string",
+      "address_line_2": "string",
+      "city": "string",
+      "state_province": "string",
+      "postal_code": "string",
+      "country_code": "string",
+      "phone": "string",
+      "delivery_instructions": "string",
+      "is_default_shipping": "boolean",
+      "is_default_billing": "boolean",
+      "created_at": "date",
+      "updated_at": "date"
+    },
+    "constraints": {
+      "address_type": {
+        "maxLength": 20
+      },
+      "label": {
+        "maxLength": 100
+      },
+      "first_name": {
+        "maxLength": 100
+      },
+      "last_name": {
+        "maxLength": 100
+      },
+      "company": {
+        "maxLength": 100
+      },
+      "address_line_1": {
+        "maxLength": 255
+      },
+      "address_line_2": {
+        "maxLength": 255
+      },
+      "city": {
+        "maxLength": 100
+      },
+      "state_province": {
+        "maxLength": 100
+      },
+      "postal_code": {
+        "maxLength": 20
+      },
+      "country_code": {
+        "maxLength": 2
+      },
+      "phone": {
+        "maxLength": 20
+      }
+    }
+  },
+
+
+  "device_fingerprints": {
+    "required": ["id", "user_id", "fingerprint_hash"],
+    "optional": ["device_type", "browser_info", "screen_resolution", "timezone", "created_at", "updated_at"],
+    "readOnly": ["id", "created_at"],
+    "dataTypes": {
+      "id": "string",
+      "user_id": "string",
+      "fingerprint_hash": "string",
+      "device_type": "string",
+      "browser_info": "string",
+      "screen_resolution": "string",
+      "timezone": "string",
+      "created_at": "date",
+      "updated_at": "date"
+    },
+    "constraints": {
+      "fingerprint_hash": {
+        "minLength": 32,
+        "maxLength": 64
+      },
+      "device_type": {
+        "maxLength": 50
+      },
+      "browser_info": {
+        "maxLength": 200
+      },
+      "screen_resolution": {
+        "maxLength": 20
+      },
+      "timezone": {
+        "maxLength": 50
+      }
+    }
+  },
+
+  "verification_sessions": {
+    "required": ["id", "user_id", "type", "status"],
+    "optional": ["code_hash", "expires_at", "attempts", "created_at", "updated_at"],
+    "readOnly": ["id", "created_at"],
+    "dataTypes": {
+      "id": "string",
+      "user_id": "string",
+      "type": "string",
+      "status": "string",
+      "code_hash": "string",
+      "expires_at": "date",
+      "attempts": "number",
+      "created_at": "date",
+      "updated_at": "date"
+    },
+    "constraints": {
+      "type": {
+        "maxLength": 20
+      },
+      "status": {
+        "maxLength": 20
+      },
+      "code_hash": {
+        "minLength": 32,
+        "maxLength": 64
+      }
+    }
+  },
+
+  "cross_merchant_identities": {
+    "required": ["id", "user_id", "merchant_id"],
+    "optional": ["confidence_score", "linking_method", "created_at", "updated_at"],
+    "readOnly": ["id", "created_at"],
+    "dataTypes": {
+      "id": "string",
+      "user_id": "string",
+      "merchant_id": "string",
+      "confidence_score": "number",
+      "linking_method": "string",
+      "created_at": "date",
+      "updated_at": "date"
+    },
+    "constraints": {
+      "merchant_id": {
+        "maxLength": 50
+      },
+      "linking_method": {
+        "maxLength": 50
+      }
+    }
+  }
+} 

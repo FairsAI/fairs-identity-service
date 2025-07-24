@@ -87,26 +87,50 @@ function validateMerchantAccess(options = {}) {
       // Store in request for use by route handlers
       req.merchantId = merchantId;
       
+      // SECURITY: Always require API key authentication - NEVER skip validation
+      const apiKey = req.apiKeyInfo?.key;
+      
+      if (!apiKey) {
+        logger.error(`SECURITY VIOLATION: Missing API key for merchant access attempt`, {
+          merchantId,
+          path: req.path,
+          method: req.method,
+          ip: req.ip,
+          userAgent: req.headers['user-agent']
+        });
+        return res.status(401).json({
+          success: false,
+          error: 'API key authentication required for merchant access'
+        });
+      }
+      
       // If we have a merchant-to-apikey mapping, validate it
       if (config.api?.merchantApiKeys && Object.keys(config.api.merchantApiKeys).length > 0) {
-        const apiKey = req.apiKeyInfo?.key;
-        
-        if (!apiKey) {
-          return next(); // Skip merchant validation if no API key present
-        }
-        
         // Check if this API key is authorized for this merchant
         const authorizedMerchants = config.api.merchantApiKeys[apiKey] || [];
-        const hasAccess = authorizedMerchants.includes(merchantId) || 
-                          authorizedMerchants.includes('*'); // Wildcard for all merchants
+        const hasAccess = authorizedMerchants.includes(merchantId);
+        
+        // SECURITY: Wildcard permissions removed - explicit merchant authorization required
+        // Admin access should be managed through proper role-based permissions, not wildcards
         
         if (!hasAccess) {
-          logger.warn(`Unauthorized merchant access attempt: API key not authorized for merchant ${merchantId}`);
+          logger.warn(`Unauthorized merchant access attempt: API key not authorized for merchant ${merchantId}`, {
+            apiKeyPrefix: apiKey.substring(0, 8) + '...',
+            merchantId,
+            path: req.path,
+            ip: req.ip
+          });
           return res.status(403).json({
             success: false,
             error: 'API key not authorized for this merchant'
           });
         }
+      } else {
+        // No merchant mapping configured - require API key but allow access
+        logger.debug(`API key validated for merchant access (no specific mapping)`, {
+          merchantId,
+          apiKeyPrefix: apiKey.substring(0, 8) + '...'
+        });
       }
       
       next();
