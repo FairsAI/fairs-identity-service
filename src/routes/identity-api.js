@@ -547,23 +547,16 @@ router.post('/auth/token', authenticateRequest, validateAndSanitizeInput, async 
       });
     }
     
-    // Generate JWT token using AuthService
-    const token = authService.generateToken({
-      userId: user.id,
-      username: user.email,
-      merchantId: merchantId || req.merchantId || 'lv-demo-merchant',
-      permissions: ['user:read', 'financial:read']
-    });
-    
-    logger.info('JWT token generated for user', { 
+    // Identity service only returns user data - authentication handled by auth service
+    logger.info('User data returned - no token generation', { 
       userId: user.id, 
       email: user.email,
-      merchantId: merchantId || req.merchantId
+      merchantId: merchantId || req.merchantId,
+      note: 'Use auth service for JWT tokens'
     });
     
     res.json({
       success: true,
-      token,
       user: {
         id: user.id,
         email: user.email,
@@ -574,10 +567,10 @@ router.post('/auth/token', authenticateRequest, validateAndSanitizeInput, async 
     });
     
   } catch (error) {
-    logger.error('JWT token generation failed:', error);
+    logger.error('User lookup failed:', error);
     res.status(500).json({
       success: false,
-      error: 'Token generation failed'
+      error: 'User lookup failed'
     });
   }
 });
@@ -623,20 +616,12 @@ router.post('/identity/cross-merchant-lookup', async (req, res) => {
         responseTime
       });
       
-      // Generate JWT token for recognized user
-      const token = authService.generateToken({
-        userId: userProfile.universalId,
-        username: userProfile.email,
-        merchantId: merchantId,
-        permissions: ['user:read', 'user:write'],
-        type: 'standard'
-      });
-      
+      // Identity service only returns user data - authentication handled by auth service
       logger.info({
-        message: 'JWT token generated for cross-merchant recognized user',
+        message: 'Cross-merchant user data returned - no token generation',
         userId: userProfile.universalId,
         merchantId,
-        tokenType: 'standard'
+        note: 'Use auth service for JWT tokens'
       });
       
       return res.json({
@@ -651,7 +636,7 @@ router.post('/identity/cross-merchant-lookup', async (req, res) => {
         deviceCount: userProfile.deviceCount,
         lastSeen: userProfile.updatedAt,
         responseTime,
-        token: token
+        // Note: token generation removed - use auth service instead
       });
     }
     
@@ -2016,25 +2001,17 @@ router.post('/identity/lookup', validateAndSanitizeInput, async (req, res) => {
         lookupType
       });
       
-      // Generate JWT token for recognized user
-      const token = authService.generateToken({
-        userId: user.universalId || user.id,
-        username: user.email,
-        merchantId: merchantId || req.merchantId || 'default',
-        permissions: ['user:read', 'user:write'],
-        type: 'standard'
-      });
-      
+      // Identity service only returns user data - authentication handled by auth service
       logger.info({
-        message: 'JWT token generated for recognized user',
+        message: 'User data returned from lookup - no token generation',
         userId: user.universalId || user.id,
-        tokenType: 'standard'
+        note: 'Calling service should use auth service for JWT tokens'
       });
       
       res.json({
         success: true,
-        user: user,
-        token: token
+        user: user
+        // Note: token generation removed - use auth service instead
       });
     } else {
       logger.info({
@@ -2382,21 +2359,13 @@ router.post('/identity/enhanced-cross-merchant', async (req, res) => {
     const responseTime = Date.now() - startTime;
     
     if (enhancedConfidence >= 0.90 && userCorrelation.userId) {
-      // Generate JWT token for enhanced recognized user
-      const token = authService.generateToken({
-        userId: userCorrelation.userId,
-        username: userCorrelation.email || null,
-        merchantId: merchantId,
-        permissions: ['user:read', 'user:write'],
-        type: 'enhanced'
-      });
-      
+      // Identity service only returns user data - authentication handled by auth service
       logger.info({
-        message: 'JWT token generated for enhanced cross-merchant recognized user',
+        message: 'Enhanced cross-merchant user data returned - no token generation',
         userId: userCorrelation.userId,
         merchantId,
         confidence: enhancedConfidence,
-        tokenType: 'enhanced'
+        note: 'Use auth service for JWT tokens'
       });
       
       res.json({
@@ -2411,7 +2380,7 @@ router.post('/identity/enhanced-cross-merchant', async (req, res) => {
         components: ['cross-merchant-manager', 'user-repository', 'security-monitoring'],
         enhanced: true,
         phase: '1.5A',
-        token: token
+        // Note: token generation removed - use auth service instead
       });
     } else {
       // Fallback to basic resolution

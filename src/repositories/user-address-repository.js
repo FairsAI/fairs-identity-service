@@ -405,6 +405,38 @@ class UserAddressRepository {
       throw error;
     }
   }
+  /**
+   * Update address owner from session to user
+   * Used when converting guest checkout to registered user
+   */
+  async updateAddressOwner(addressId, fromUserId, toUserId) {
+    const query = `
+      UPDATE identity_service.user_addresses 
+      SET user_id = $1, updated_at = NOW()
+      WHERE id = $2 AND user_id = $3
+      RETURNING *;
+    `;
+
+    try {
+      const result = await this.db.query(query, [toUserId, addressId, fromUserId]);
+      
+      if (result.length === 0) {
+        throw new Error('Address not found or not owned by fromUserId');
+      }
+
+      logger.info({
+        message: 'Address owner updated successfully',
+        addressId,
+        fromUserId,
+        toUserId
+      });
+      
+      return result[0];
+    } catch (error) {
+      logger.error('Failed to update address owner:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = new UserAddressRepository(); 

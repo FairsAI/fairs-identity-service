@@ -659,6 +659,61 @@ router.post('/addresses/:addressId/used', async (req, res) => {
   }
 });
 
+/**
+ * Update address owner from session to user
+ * POST /api/addresses/:addressId/update-owner
+ */
+router.post('/addresses/:addressId/update-owner', async (req, res) => {
+  logger.info({
+    message: 'Enhanced Schema: Update address owner request',
+    addressId: req.params.addressId,
+    fromUserId: req.body.fromUserId,
+    toUserId: req.body.toUserId
+  });
+
+  try {
+    const { fromUserId, toUserId } = req.body;
+    
+    if (!fromUserId || !toUserId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Both fromUserId and toUserId are required' 
+      });
+    }
+
+    // Update address owner in database
+    const result = await userAddressRepository.updateAddressOwner(
+      req.params.addressId, 
+      fromUserId, 
+      toUserId
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Address not found or not owned by fromUserId' 
+      });
+    }
+    
+    logger.info('Address owner updated successfully', { 
+      addressId: req.params.addressId,
+      from: fromUserId,
+      to: toUserId
+    });
+    
+    res.json({ 
+      success: true,
+      message: 'Address owner updated successfully'
+    });
+  } catch (error) {
+    logger.error('Failed to update address owner:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
 
 // ============================================================================
 // ENHANCED SCHEMA: COMPLETE USER PROFILE
