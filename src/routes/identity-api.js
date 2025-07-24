@@ -512,65 +512,26 @@ router.get('/users/:userId', authenticateRequest, validateAndSanitizeInput, asyn
  * POST /api/auth/token
  */
 router.post('/auth/token', authenticateRequest, validateAndSanitizeInput, async (req, res) => {
-  try {
-    const { userId, email, merchantId } = req.body;
-    
-    if (!userId && !email) {
-      return res.status(400).json({
-        success: false,
-        error: 'User ID or email is required'
-      });
+  // SECURITY: Token generation removed - auth consolidation phase 1
+  logger.warn('Attempted to use deprecated token generation endpoint', {
+    userId: req.body.userId,
+    email: req.body.email,
+    ip: req.ip,
+    userAgent: req.get('User-Agent')
+  });
+  
+  res.status(410).json({
+    success: false,
+    error: 'Token generation has been moved to auth-service',
+    code: 'ENDPOINT_REMOVED',
+    message: 'This endpoint has been permanently removed for security reasons. Please use the auth-service /api/auth/login endpoint to generate tokens.',
+    migration: {
+      old_endpoint: 'POST /api/auth/token',
+      new_endpoint: 'POST https://auth-service/api/auth/login',
+      deprecated_since: '2025-07-24',
+      reason: 'Security consolidation - single token authority'
     }
-    
-    let user = null;
-    
-    // Find user by ID or email
-    if (userId) {
-      user = await userRepository.getUserById(userId);
-    } else if (email) {
-      user = await userRepository.getUserByEmail(email);
-    }
-    
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found'
-      });
-    }
-    
-    // Generate JWT token using AuthService
-    const token = authService.generateToken({
-      userId: user.id,
-      username: user.email,
-      merchantId: merchantId || req.merchantId || 'lv-demo-merchant',
-      permissions: ['user:read', 'financial:read']
-    });
-    
-    logger.info('JWT token generated for user', { 
-      userId: user.id, 
-      email: user.email,
-      merchantId: merchantId || req.merchantId
-    });
-    
-    res.json({
-      success: true,
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name
-      },
-      expiresIn: 24 * 60 * 60 // 24 hours
-    });
-    
-  } catch (error) {
-    logger.error('JWT token generation failed:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Token generation failed'
-    });
-  }
+  });
 });
 
 // ============================================================================
