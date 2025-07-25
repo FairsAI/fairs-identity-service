@@ -7,13 +7,13 @@ RUN apk add --no-cache curl
 WORKDIR /app
 
 # Copy package files for dependency installation
-COPY package*.json ./
+COPY ./fairs-identity-service/package*.json ./
 
 # Install production dependencies
 RUN npm install --only=production && npm cache clean --force
 
 # Copy application code
-COPY . .
+COPY ./fairs-identity-service/ ./
 
 # Create necessary directories
 RUN mkdir -p logs && chown -R node:node logs
