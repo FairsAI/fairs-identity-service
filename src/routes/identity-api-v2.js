@@ -1,10 +1,6 @@
 /**
- * Identity API Routes - Identity Service owns user data
- * 
- * Architecture:
- * - Identity Service is the source of truth for user profile data
- * - Auth Service only handles authentication (password verification, tokens)
- * - All user data queries come directly to Identity Service
+ * Identity API v2 - Identity Service owns user data
+ * Auth Service only handles authentication
  */
 
 const express = require('express');
@@ -12,90 +8,6 @@ const router = express.Router();
 const { dbConnection } = require('../database/db-connection');
 const { logger } = require('../utils/logger');
 const UserRecognition = require('../models/user-recognition');
-
-/**
- * User Lookup (SDK endpoint)
- * POST /api/identity/lookup
- */
-router.post('/identity/lookup', async (req, res) => {
-  logger.info({
-    message: 'User lookup request (SDK)',
-    lookupType: req.body.lookupType,
-    hasEmail: !!req.body.email,
-    hasPhone: !!req.body.phone
-  });
-  
-  try {
-    const { email, phone, lookupType, deviceFingerprint, ipAddress, userAgent } = req.body;
-    
-    if (!lookupType || (lookupType === 'email' && !email) || (lookupType === 'phone' && !phone)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid lookup parameters'
-      });
-    }
-    
-    // Look up user in identity service database
-    let user = null;
-    let query, params;
-    
-    if (lookupType === 'email' && email) {
-      query = 'SELECT * FROM identity_service.users WHERE email = $1 AND is_active = true LIMIT 1';
-      params = [email.trim().toLowerCase()];
-    } else if (lookupType === 'phone' && phone) {
-      query = 'SELECT * FROM identity_service.users WHERE phone = $1 AND is_active = true LIMIT 1';
-      params = [phone];
-    }
-    
-    const result = await dbConnection.query(query, params);
-    user = result[0];
-    
-    if (!user) {
-      return res.json({
-        success: false,
-        user: null
-      });
-    }
-    
-    // Record successful recognition
-    await UserRecognition.recordRecognition(user.id, {
-      deviceFingerprint,
-      confidence: 100,
-      method: lookupType,
-      ipAddress,
-      userAgent
-    });
-    
-    logger.info('User lookup successful', {
-      userId: user.id
-    });
-    
-    // Return user data from identity service
-    return res.json({
-      success: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        phone: user.phone,
-        firstName: user.first_name,
-        lastName: user.last_name,
-        name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || null,
-        authUserId: user.auth_user_id
-      }
-    });
-    
-  } catch (error) {
-    logger.error('User lookup error', {
-      error: error.message,
-      stack: error.stack
-    });
-    
-    return res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
-  }
-});
 
 /**
  * Service-to-Service User Lookup
@@ -362,86 +274,6 @@ router.post('/users/:userId/link-auth', async (req, res) => {
     return res.status(500).json({
       success: false,
       error: 'Failed to link user to auth service'
-    });
-  }
-});
-
-/**
- * Device Recognition Endpoint
- * POST /api/identity/recognize-device
- * 
- * Attempts to recognize a user by their device fingerprint
- */
-router.post('/identity/recognize-device', async (req, res) => {
-  try {
-    const { deviceFingerprint, browserFingerprint } = req.body;
-    
-    if (!deviceFingerprint) {
-      return res.status(400).json({
-        success: false,
-        error: 'Device fingerprint required'
-      });
-    }
-    
-    // Look up user by device fingerprint
-    const recognition = await UserRecognition.findByDeviceFingerprint(deviceFingerprint);
-    
-    if (!recognition) {
-      return res.json({
-        success: false,
-        recognized: false
-      });
-    }
-    
-    // Fetch user data from identity service database
-    const result = await dbConnection.query(
-      'SELECT * FROM identity_service.users WHERE id = $1 AND is_active = true',
-      [recognition.user_id]
-    );
-    
-    const user = result[0];
-    
-    if (!user) {
-      logger.warn('User found in recognition but not in users table', {
-        userId: recognition.user_id
-      });
-      return res.json({
-        success: false,
-        recognized: false
-      });
-    }
-    
-    // Update recognition timestamp
-    await UserRecognition.recordRecognition(user.id, {
-      deviceFingerprint,
-      browserFingerprint,
-      confidence: recognition.confidence,
-      method: 'device',
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent']
-    });
-    
-    return res.json({
-      success: true,
-      recognized: true,
-      confidence: recognition.confidence,
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name,
-        name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || null
-      }
-    });
-    
-  } catch (error) {
-    logger.error('Device recognition error', {
-      error: error.message
-    });
-    
-    return res.status(500).json({
-      success: false,
-      error: 'Internal server error'
     });
   }
 });

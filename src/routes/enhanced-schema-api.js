@@ -408,6 +408,33 @@ router.get('/addresses/:userId', validateUserOwnership, async (req, res) => {
 });
 
 /**
+ * Get all addresses for user - NEW PATTERN to support checkout service
+ * GET /api/users/:userId/addresses
+ */
+router.get('/users/:userId/addresses', validateUserOwnership, async (req, res) => {
+  logger.info({
+    message: 'Enhanced Schema: Get user addresses request (new pattern)',
+    userId: req.params.userId
+  });
+
+  try {
+    const addresses = await userAddressRepository.getUserAddresses(req.params.userId);
+    
+    res.json({ 
+      success: true, 
+      addresses,
+      count: addresses.length
+    });
+  } catch (error) {
+    logger.error('Failed to get user addresses:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+/**
  * Get shipping addresses for user (independent selection) - SECURITY FIXED
  * GET /api/addresses/:userId/shipping
  */
