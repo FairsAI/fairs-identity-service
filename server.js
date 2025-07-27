@@ -149,17 +149,37 @@ const server = app.listen(PORT, HOST, async () => {
   
   // Verify database connection after server starts
   await verifyDatabaseConnection();
+  
+  // Initialize cache invalidation subscriber
+  try {
+    const cacheInvalidationSubscriber = require('./src/services/cache-invalidation-subscriber');
+    await cacheInvalidationSubscriber.initialize();
+    console.log('🔄 Cache invalidation subscriber initialized');
+  } catch (error) {
+    console.error('⚠️  Failed to initialize cache invalidation subscriber:', error.message);
+    // Don't fail startup if cache subscriber fails
+  }
+  
+  // Initialize user cache service
+  try {
+    const userCache = require('./src/services/user-cache-service');
+    await userCache.initialize();
+    console.log('💾 Redis user cache initialized');
+  } catch (error) {
+    console.error('⚠️  Failed to initialize user cache:', error.message);
+    // Service can work without cache
+  }
 });
 
 // ===========================================
 // GRACEFUL SHUTDOWN HANDLING
 // ===========================================
 
-function gracefulShutdown(signal) {
+async function gracefulShutdown(signal) {
   logger.info(`🛑 Received ${signal}, shutting down gracefully`);
   
   // Stop accepting new requests
-  server.close(() => {
+  server.close(async () => {
     logger.info('✅ HTTP server closed');
     
     // Cleanup security monitor
@@ -171,6 +191,17 @@ function gracefulShutdown(signal) {
       }
     } catch (error) {
       logger.warn('⚠️ Security monitor cleanup failed:', error.message);
+    }
+    
+    // Shutdown event subscriber
+    try {
+      const { eventSubscriber } = require('./src/services/event-subscriber');
+      if (eventSubscriber && eventSubscriber.shutdown) {
+        await eventSubscriber.shutdown();
+        logger.info('✅ Event subscriber shut down');
+      }
+    } catch (error) {
+      logger.warn('⚠️ Event subscriber shutdown failed:', error.message);
     }
     
     // Close database connections
