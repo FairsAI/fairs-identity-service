@@ -1,0 +1,38 @@
+FROM node:18-alpine
+
+# Install system dependencies
+RUN apk add --no-cache curl
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files from identity service
+COPY ./fairs-identity-service/package*.json ./
+
+# Install dependencies
+RUN npm install --only=production && npm cache clean --force
+
+# Copy security middleware and dependencies
+COPY ./shared/security-middleware /app/shared/security-middleware
+COPY ./shared/uuid-utils /app/shared/uuid-utils
+COPY ./shared/security-config /app/shared/security-config
+
+# Copy source code
+COPY ./fairs-identity-service/. .
+
+# Setup directories and permissions
+RUN mkdir -p logs && \
+    chown -R node:node logs
+
+# Use non-root user
+USER node
+
+# Expose identity service port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:3000/health || exit 1
+
+# Start identity service with enhanced security
+CMD ["node", "server-enhanced.js"]
