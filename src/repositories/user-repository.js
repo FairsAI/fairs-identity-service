@@ -132,11 +132,11 @@ class UserRepository {
       
       const query = `
         INSERT INTO identity_service.users (
-          id, email, first_name, last_name, phone, password_hash, 
+          id, email, first_name, last_name, phone, 
           is_guest, member_converted_at,
           created_at, updated_at, is_active
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW(), true)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), true)
         RETURNING id, email, first_name, last_name, phone, 
                   is_guest, member_converted_at,
                   created_at, updated_at, is_active
@@ -148,7 +148,6 @@ class UserRepository {
         finalFirstName,
         finalLastName,
         phone || null,
-        hashedPassword,
         is_guest || false,
         member_converted_at || null
       ];
@@ -283,7 +282,7 @@ class UserRepository {
       logger.debug('Verifying user password', { email });
       
       const query = `
-        SELECT id, email, first_name, last_name, phone, password_hash, created_at, updated_at, is_active
+        SELECT id, email, first_name, last_name, phone, created_at, updated_at, is_active
         FROM identity_service.users 
         WHERE email = $1 AND is_active = true
       `;
@@ -297,20 +296,10 @@ class UserRepository {
       
       const user = result[0];
       
-      if (!user.password_hash) {
-        logger.debug('User has no password set', { email });
-        return null;
-      }
-      
-      const isValid = await bcrypt.compare(password, user.password_hash);
-      
-      if (!isValid) {
-        logger.debug('Invalid password', { email });
-        return null;
-      }
-      
-      // Remove password hash from returned user object
-      delete user.password_hash;
+      // Since we don't have password_hash in identity service,
+      // password verification should be done via auth service
+      logger.debug('Password verification not supported in identity service', { email });
+      return null;
       
       logger.debug('Password verified successfully', { userId: user.id, email });
       return user;
