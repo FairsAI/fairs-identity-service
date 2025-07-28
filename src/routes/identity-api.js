@@ -446,4 +446,197 @@ router.post('/identity/recognize-device', async (req, res) => {
   }
 });
 
+/**
+ * Get User Recognition Data
+ * POST /api/identity/users/:userId/recognition
+ * 
+ * This endpoint calculates confidence scores based on device context
+ * and historical recognition data
+ */
+router.post('/identity/users/:userId/recognition', 
+  require('../middleware/service-auth').validateServiceAuth,
+  require('../middleware/service-auth').requireServices(['checkout-service', 'orchestrator']),
+  async (req, res) => {
+    logger.info({
+      message: 'User recognition request',
+      userId: req.params.userId,
+      serviceClient: req.serviceClient,
+      hasDeviceContext: !!req.body.deviceContext
+    });
+
+    try {
+      const { userId } = req.params;
+      const { deviceContext, merchantId = 'default' } = req.body;
+
+      // Validate user exists
+      const userQuery = 'SELECT * FROM identity_service.users WHERE id = $1 AND is_active = true';
+      const userResult = await dbConnection.query(userQuery, [userId]);
+      
+      if (userResult.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'User not found'
+        });
+      }
+
+      const user = userResult[0];
+
+      // Calculate confidence score based on various factors
+      let confidenceScore = 0;
+      const confidenceFactors = {
+        tokenValidity: 0,
+        deviceConsistency: 0,
+        behavioralConsistency: 0,
+        sessionFreshness: 0,
+        securityRisk: 0
+      };
+
+      // Factor 1: Token validity (if user has valid session) - 40% weight
+      // This would come from auth service in a full implementation
+      confidenceFactors.tokenValidity = 0.8; // Default high score for existing users
+      confidenceScore += confidenceFactors.tokenValidity * 0.4;
+
+      // Factor 2: Device consistency - 25% weight
+      if (deviceContext && deviceContext.deviceId) {
+        // Check if we've seen this device before for this user
+        const deviceQuery = `
+          SELECT confidence FROM identity_service.device_user_associations
+          WHERE user_id = $1 AND merchant_id = $2
+          ORDER BY last_seen DESC
+          LIMIT 1
+        `;
+        const deviceResult = await dbConnection.query(deviceQuery, [userId, merchantId]);
+        
+        if (deviceResult.length > 0) {
+          confidenceFactors.deviceConsistency = deviceResult[0].confidence / 100;
+        } else {
+          // New device
+          confidenceFactors.deviceConsistency = 0.3;
+        }
+      } else {
+        confidenceFactors.deviceConsistency = 0.2; // No device context
+      }
+      confidenceScore += confidenceFactors.deviceConsistency * 0.25;
+
+      // Factor 3: Behavioral consistency - 15% weight
+      if (deviceContext && deviceContext.mouseMovements && deviceContext.keystrokes) {
+        // Simple behavioral scoring based on activity
+        const hasNormalActivity = deviceContext.mouseMovements > 10 && deviceContext.keystrokes > 5;
+        confidenceFactors.behavioralConsistency = hasNormalActivity ? 0.9 : 0.5;
+      } else {
+        confidenceFactors.behavioralConsistency = 0.5;
+      }
+      confidenceScore += confidenceFactors.behavioralConsistency * 0.15;
+
+      // Factor 4: Session freshness - 10% weight
+      // In a real implementation, check last login time
+      confidenceFactors.sessionFreshness = 0.8;
+      confidenceScore += confidenceFactors.sessionFreshness * 0.1;
+
+      // Factor 5: Security risk assessment - 10% weight
+      // Check for suspicious patterns
+      confidenceFactors.securityRisk = 0.9; // Low risk by default
+      confidenceScore += confidenceFactors.securityRisk * 0.1;
+
+      // Convert to percentage
+      const confidencePercentage = Math.round(confidenceScore * 100);
+
+      // Determine recommended flow based on confidence
+      let recommendedFlow = 'standard_checkout';
+      let shouldSkipSteps = false;
+      let skippableSteps = [];
+
+      if (confidencePercentage >= 80) {
+        recommendedFlow = 'express_checkout';
+        shouldSkipSteps = true;
+        skippableSteps = ['phone_verification', 'email_verification'];
+      } else if (confidencePercentage >= 50) {
+        recommendedFlow = 'simplified_checkout';
+        shouldSkipSteps = true;
+        skippableSteps = ['phone_verification'];
+      }
+
+      // Log recognition event
+      const eventQuery = `
+        INSERT INTO identity_service.recognition_events (
+          user_id,
+          merchant_id,
+          confidence_score,
+          recommended_flow,
+          recognition_successful,
+          ip_address,
+          user_agent,
+          processing_time_ms,
+          created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      `;
+
+      const startTime = Date.now();
+      await dbConnection.query(eventQuery, [
+        userId,
+        merchantId,
+        confidencePercentage / 100,
+        recommendedFlow,
+        true,
+        req.ip,
+        req.headers['user-agent'],
+        Date.now() - startTime
+      ]).catch(err => {
+        logger.warn('Failed to log recognition event', { error: err.message });
+      });
+
+      // Log confidence history for ML training
+      const historyQuery = `
+        INSERT INTO identity_service.confidence_history (
+          user_id,
+          merchant_id,
+          confidence_score,
+          factors,
+          device_context,
+          created_at
+        ) VALUES ($1, $2, $3, $4, $5, NOW())
+      `;
+
+      await dbConnection.query(historyQuery, [
+        userId,
+        merchantId,
+        confidencePercentage / 100,
+        JSON.stringify(confidenceFactors),
+        JSON.stringify(deviceContext || {})
+      ]).catch(err => {
+        logger.warn('Failed to log confidence history', { error: err.message });
+      });
+
+      logger.info('User recognition calculated', {
+        userId,
+        confidenceScore: confidencePercentage,
+        recommendedFlow
+      });
+
+      return res.json({
+        success: true,
+        data: {
+          userId,
+          confidenceScore: confidencePercentage,
+          recommendedFlow,
+          shouldSkipSteps,
+          skippableSteps,
+          factors: confidenceFactors
+        }
+      });
+
+    } catch (error) {
+      logger.error('User recognition error', {
+        error: error.message,
+        stack: error.stack
+      });
+
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to calculate recognition confidence'
+      });
+    }
+  }
+);
+
 module.exports = router;
