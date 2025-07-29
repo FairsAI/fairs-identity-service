@@ -38,7 +38,7 @@ async function validateServiceToken(token) {
   try {
     // Validate with Auth Service
     const authServiceUrl = process.env.AUTH_SERVICE_URL || 'http://fairs-auth-service:3005';
-    const response = await axios.post(`${authServiceUrl}/api/v1/tokens/validate`, {
+    const response = await axios.post(`${authServiceUrl}/api/tokens/validate`, {
       token
     }, {
       timeout: 5000,
