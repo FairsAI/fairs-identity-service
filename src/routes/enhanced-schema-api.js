@@ -6,6 +6,7 @@ const rateLimit = require('express-rate-limit');
 const userAddressRepository = require('../repositories/user-address-repository');
 const { userRepository } = require('../repositories/user-repository');
 const { logger } = require('../utils/logger');
+const { authenticateServiceOrUser } = require('../middleware/service-auth-middleware');
 
 // ============================================================================
 // 🚨 CRITICAL SECURITY FIXES - FINANCIAL DATA PROTECTION
@@ -13,66 +14,11 @@ const { logger } = require('../utils/logger');
 
 /**
  * JWT Authentication Middleware - CRITICAL SECURITY FIX
+ * Now supports both user JWT tokens and service tokens
  */
-const authenticateRequest = async (req, res, next) => {
-  try {
-    // Check for API key or JWT token
-    const apiKey = req.headers['x-api-key'];
-    const authHeader = req.headers.authorization;
-    
-    if (!apiKey && !authHeader) {
-      logger.warn('SECURITY: Unauthenticated financial data request blocked', {
-        ip: req.ip,
-        userAgent: req.headers['user-agent'],
-        endpoint: req.path
-      });
-      return res.status(401).json({
-        success: false,
-        error: 'Authentication required for financial data access',
-        code: 'FINANCIAL_AUTH_REQUIRED'
-      });
-    }
-    
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      // JWT token validation
-      const token = authHeader.substring(7);
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret-key');
-      req.user = decoded;
-      req.merchantId = decoded.merchantId; // Use camelCase to match authService
-      logger.debug('Financial data JWT authentication successful', { userId: decoded.userId });
-    } else if (apiKey) {
-      // Basic API key validation
-      if (apiKey.length < 32) {
-        return res.status(401).json({
-          success: false,
-          error: 'Invalid API key format for financial data',
-          code: 'INVALID_FINANCIAL_API_KEY'
-        });
-      }
-      req.apiKey = apiKey;
-      logger.debug('Financial data API key authentication successful');
-    } else {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid authentication method for financial data',
-        code: 'FINANCIAL_AUTH_INVALID'
-      });
-    }
-    
-    next();
-  } catch (error) {
-    logger.warn('SECURITY: Financial data authentication failed', {
-      error: error.message,
-      ip: req.ip,
-      userAgent: req.headers['user-agent']
-    });
-    return res.status(401).json({
-      success: false,
-      error: 'Financial data authentication failed',
-      code: 'FINANCIAL_AUTH_FAILED'
-    });
-  }
-};
+const authenticateRequest = authenticateServiceOrUser({
+  requiredPermissions: ['identity:read']
+});
 
 /**
  * User Ownership Validation - CRITICAL SECURITY FIX
@@ -96,6 +42,27 @@ const validateUserOwnership = (req, res, next) => {
         error: 'Authentication required for financial data',
         code: 'FINANCIAL_AUTH_REQUIRED'
       });
+    }
+    
+    // Allow service tokens to access any user's data (with proper permissions)
+    if (req.user?.isService && req.service) {
+      logger.info('Service token accessing user data', {
+        serviceId: req.service.serviceId,
+        serviceName: req.service.serviceName,
+        requestedUserId,
+        permissions: req.service.permissions
+      });
+      
+      // Check if service has identity:read permission
+      if (!req.service.permissions.includes('identity:read')) {
+        return res.status(403).json({
+          success: false,
+          error: 'Service lacks permission to read identity data',
+          code: 'INSUFFICIENT_PERMISSIONS'
+        });
+      }
+      
+      return next();
     }
     
     // Only allow users to access their own financial data (unless admin)
