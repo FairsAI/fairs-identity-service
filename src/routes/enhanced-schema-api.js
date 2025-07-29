@@ -228,8 +228,116 @@ const sanitizeErrorResponse = (error, context = '') => {
 // Apply rate limiting to all routes
 router.use(financialDataRateLimit);
 
-// Apply authentication to ALL routes
-router.use(authenticateRequest);
+// ============================================================================
+// CHECKOUT REGISTRATION ENDPOINTS (NO AUTHENTICATION REQUIRED)
+// ============================================================================
+
+/**
+ * Create customer and save address during checkout (no authentication required)
+ * This creates permanent customer profiles - users become members upon transaction completion
+ * POST /api/checkout/register
+ */
+router.post('/checkout/register', validateFinancialInput, async (req, res) => {
+  logger.info({
+    message: 'Enhanced Schema: Checkout registration request',
+    email: req.body.email,
+    label: req.body.label || req.body.nickname,
+    type: req.body.type || req.body.addressType,
+    isCheckout: true
+  });
+
+  try {
+    let { userId, email, firstName, lastName, type, nickname, ...addressData } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Email is required for checkout registration' 
+      });
+    }
+    
+    // For checkout flow, create customer if needed (permanent profile)
+    if (!userId) {
+      logger.info('Enhanced Schema: Creating customer for checkout', { email, firstName, lastName });
+      
+      try {
+        // Check if customer already exists by email
+        const existingUser = await userRepository.getUserByEmail(email);
+        
+        if (existingUser) {
+          userId = existingUser.id;
+          logger.info('Enhanced Schema: Found existing customer for checkout', { userId, email });
+        } else {
+          // Create new customer (permanent profile)
+          const newUser = await userRepository.createUser({
+            email,
+            firstName: firstName || 'Customer',
+            lastName: lastName || '',
+            phone: addressData.phone || null
+          });
+          userId = newUser.id;
+          logger.info('Enhanced Schema: Created new customer for checkout', { userId, email });
+        }
+      } catch (userError) {
+        logger.error('Enhanced Schema: Failed to create customer', userError);
+        return res.status(500).json({ 
+          success: false, 
+          error: 'Failed to create customer: ' + userError.message 
+        });
+      }
+    }
+    
+    // Get firstName/lastName from request body
+    let userFirstName = req.body.firstName || firstName || addressData.firstName || 'Customer';
+    let userLastName = req.body.lastName || lastName || addressData.lastName || '';
+    
+    // Map API fields to repository expected fields
+    const mappedAddressData = {
+      ...addressData,
+      firstName: userFirstName,
+      lastName: userLastName,
+      addressType: type || addressData.addressType || 'shipping',
+      label: nickname || addressData.label || 'Address'
+    };
+    
+    if (!mappedAddressData.city || !mappedAddressData.addressLine1) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Address line 1 and city are required' 
+      });
+    }
+
+    logger.info('Enhanced Schema: About to save checkout address', { 
+      userId, 
+      userIdType: typeof userId, 
+      formFirstName: req.body.firstName,
+      formLastName: req.body.lastName,
+      finalFirstName: userFirstName,
+      finalLastName: userLastName,
+      addressData: mappedAddressData,
+      isCheckout: true
+    });
+    
+    const address = await userAddressRepository.saveAddress(userId, mappedAddressData);
+    
+    res.json({ 
+      success: true, 
+      address,
+      userId: userId, // ✅ Return as UUID - no string conversion needed
+      message: `${mappedAddressData.label || 'Address'} saved successfully for checkout`
+    });
+  } catch (error) {
+    logger.error('Enhanced Schema: Checkout registration failed', error);
+    res.status(500).json({
+        success: false,
+        error: 'Failed to save checkout address: ' + error.message
+    });
+  }
+});
+
+// Apply authentication to authenticated routes only
+router.use('/addresses', authenticateRequest);
+router.use('/users', authenticateRequest);
 
 // ============================================================================
 // ENHANCED SCHEMA: MULTIPLE ADDRESS MANAGEMENT
@@ -354,7 +462,7 @@ router.post('/addresses', validateFinancialInput, async (req, res) => {
     res.json({ 
       success: true, 
       address,
-      userId, // ✅ Return real integer ID for frontend to store
+      userId: userId, // ✅ Return UUID consistently - no integer conversion
       message: `${mappedAddressData.label || 'Address'} saved successfully`
     });
   } catch (error) {

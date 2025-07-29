@@ -120,44 +120,64 @@ class UserRepository {
         hashedPassword = await bcrypt.hash(password, 12);
       }
       
-      // Generate UUID if not provided (for guest-to-member conversion, use the guest ID)
-      const { v4: uuidv4 } = require('uuid');
-      const userId = userData.id || uuidv4();
+      // Use database auto-increment for user ID - no UUID generation needed
+      // If userData.id is provided (for updates), we should handle differently
+      let query, values;
       
-      logger.info('🔍 DEBUG: User ID generation', {
+      if (userData.id) {
+        // For guest-to-member conversion where ID is already known
+        query = `
+          INSERT INTO identity_service.users (
+            id, email, first_name, last_name, phone, password_hash, 
+            is_guest, member_converted_at,
+            created_at, updated_at, is_active
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW(), true)
+          RETURNING id, email, first_name, last_name, phone, 
+                    is_guest, member_converted_at,
+                    created_at, updated_at, is_active
+        `;
+        
+        values = [
+          userData.id, // Use provided integer ID
+          email.toLowerCase(),
+          finalFirstName,
+          finalLastName,
+          phone || null,
+          hashedPassword,
+          is_guest || false,
+          member_converted_at || null
+        ];
+      } else {
+        // For new users, let database auto-generate integer ID
+        query = `
+          INSERT INTO identity_service.users (
+            email, first_name, last_name, phone, password_hash, 
+            is_guest, member_converted_at,
+            created_at, updated_at, is_active
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), true)
+          RETURNING id, email, first_name, last_name, phone, 
+                    is_guest, member_converted_at,
+                    created_at, updated_at, is_active
+        `;
+        
+        values = [
+          email.toLowerCase(),
+          finalFirstName,
+          finalLastName,
+          phone || null,
+          hashedPassword,
+          is_guest || false,
+          member_converted_at || null
+        ];
+      }
+      
+      logger.info('🔍 DEBUG: User creation', {
         providedId: userData.id,
-        finalUserId: userId,
-        userDataKeys: Object.keys(userData)
-      });
-      
-      const query = `
-        INSERT INTO identity_service.users (
-          id, email, first_name, last_name, phone, password_hash, 
-          is_guest, member_converted_at,
-          created_at, updated_at, is_active
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW(), true)
-        RETURNING id, email, first_name, last_name, phone, 
-                  is_guest, member_converted_at,
-                  created_at, updated_at, is_active
-      `;
-      
-      const values = [
-        userId,
-        email.toLowerCase(),
-        finalFirstName,
-        finalLastName,
-        phone || null,
-        hashedPassword,
-        is_guest || false,
-        member_converted_at || null
-      ];
-      
-      logger.info('🔍 DEBUG: Before INSERT query', {
-        userId: userId,
+        hasProvidedId: !!userData.id,
         values: values,
-        valueCount: values.length,
-        firstValue: values[0]
+        valueCount: values.length
       });
       
       const result = await dbConnection.query(query, values);
