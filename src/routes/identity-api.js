@@ -41,6 +41,7 @@ const { eventBus } = require('../events/event-bus');
 const { sanitizeInput, sanitizeVerificationInput } = require('../middleware/input-sanitization');
 const { rateLimiter } = require('../middleware/rate-limiter');
 const { validateApiKey, validateMerchantAccess } = require('../middleware/auth-middleware');
+const { authenticateServiceOrUser, requireServiceAuth } = require('../middleware/service-auth-middleware');
 const { 
   createValidationMiddleware, 
   validateParameters, 
@@ -53,11 +54,12 @@ const {
 // ============================================================================
 
 /**
- * JWT Authentication Middleware - CRITICAL SECURITY FIX
+ * Enhanced Authentication Middleware - Supports Service Tokens + Legacy Methods
+ * CRITICAL SECURITY: Validates JWT tokens, Service tokens, and API keys
  */
 const authenticateRequest = async (req, res, next) => {
   try {
-    // Check for API key or JWT token
+    // Check for API key or Authorization header
     const apiKey = req.headers['x-api-key'];
     const authHeader = req.headers.authorization;
     
@@ -75,14 +77,38 @@ const authenticateRequest = async (req, res, next) => {
     }
     
     if (authHeader && authHeader.startsWith('Bearer ')) {
-      // JWT token validation
       const token = authHeader.substring(7);
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret-key');
-      req.user = decoded;
-      req.merchantId = decoded.merchantId; // Use camelCase to match authService
-      logger.debug('JWT authentication successful', { userId: decoded.userId, merchantId: decoded.merchantId });
+      
+      // Quick decode to check token type
+      const decoded = jwt.decode(token);
+      
+      if (decoded && decoded.tokenType === 'service' && decoded.serviceId) {
+        // Use service token authentication middleware
+        return authenticateServiceOrUser({ requiredPermissions: ['identity:read'] })(req, res, next);
+      } else {
+        // Regular JWT token validation
+        try {
+          const verified = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret-key');
+          req.user = verified;
+          req.merchantId = verified.merchantId;
+          logger.debug('JWT authentication successful', { 
+            userId: verified.userId, 
+            merchantId: verified.merchantId 
+          });
+        } catch (jwtError) {
+          logger.warn('JWT token validation failed', {
+            error: jwtError.message,
+            ip: req.ip
+          });
+          return res.status(401).json({
+            success: false,
+            error: 'Invalid or expired token',
+            code: 'INVALID_TOKEN'
+          });
+        }
+      }
     } else if (apiKey) {
-      // Basic API key validation - enhance as needed
+      // Legacy API key validation - maintained for backward compatibility
       if (apiKey.length < 32) {
         return res.status(401).json({
           success: false,
@@ -2927,5 +2953,26 @@ router.post('/convert-guest-to-member',
     }
   }
 );
+
+// ============================================================================
+// HEALTH CHECK ENDPOINT
+// ============================================================================
+
+/**
+ * Health check endpoint - no authentication required
+ */
+router.get('/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    service: 'fairs-identity-service',
+    timestamp: new Date().toISOString(),
+    version: '1.0.0',
+    authentication: {
+      serviceTokens: 'enabled',
+      legacyApiKeys: 'supported',
+      jwtTokens: 'supported'
+    }
+  });
+});
 
 module.exports = router; 

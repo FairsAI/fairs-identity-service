@@ -24,7 +24,7 @@ function cleanTokenCache() {
 }
 
 /**
- * Validate service token with Auth Service
+ * Validate service token with API Orchestrator (follows established pattern)
  * @param {string} token - Service token to validate
  * @returns {Promise<Object>} Token validation result
  */
@@ -36,14 +36,16 @@ async function validateServiceToken(token) {
   }
 
   try {
-    // Validate with Auth Service
-    const authServiceUrl = process.env.AUTH_SERVICE_URL || 'http://fairs-auth-service:3005';
-    const response = await axios.post(`${authServiceUrl}/api/tokens/validate`, {
+    // SECURITY: All service communication MUST go through API Orchestrator
+    const orchestratorUrl = process.env.API_ORCHESTRATOR_URL || 'http://fairs-api-orchestrator:4000';
+    const response = await axios.post(`${orchestratorUrl}/api/v1/tokens/validate`, {
       token
     }, {
       timeout: 5000,
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'X-Service-Client': 'identity-service'
       }
     });
 
@@ -64,7 +66,8 @@ async function validateServiceToken(token) {
   } catch (error) {
     logger.error('Service token validation failed', {
       error: error.message,
-      token: token.substring(0, 20) + '...'
+      token: token.substring(0, 20) + '...',
+      status: error.response?.status
     });
     throw error;
   }
