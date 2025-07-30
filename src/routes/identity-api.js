@@ -2975,4 +2975,307 @@ router.get('/health', (req, res) => {
   });
 });
 
+// ============================================================================
+// USER RECOGNITION ENDPOINT - Production Integration
+// ============================================================================
+
+/**
+ * User Recognition Endpoint
+ * POST /api/identity/users/:userId/recognition
+ * 
+ * Provides confidence-based user recognition for checkout optimization
+ * Returns recognition data with confidence scores and suggested flows
+ */
+router.post('/identity/users/:userId/recognition', async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    const { userId } = req.params;
+    const { deviceInfo, sessionData, merchantId } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        error: 'User ID is required'
+      });
+    }
+    
+    logger.info('User Recognition: Processing recognition request', {
+      userId,
+      merchantId,
+      hasDeviceInfo: !!deviceInfo,
+      hasSessionData: !!sessionData
+    });
+    
+    // Get user data and cross-merchant history
+    const userQuery = `
+      SELECT u.id, u.email, u.first_name, u.last_name, u.phone, u.created_at,
+             COUNT(DISTINCT cmi.merchant_id) as merchant_count,
+             MAX(cmi.last_seen) as last_activity,
+             COUNT(DISTINCT a.id) as saved_addresses,
+             COUNT(DISTINCT pm.id) as saved_payment_methods
+      FROM identity_service.users u
+      LEFT JOIN identity_service.cross_merchant_identities cmi ON cmi.user_id = u.id
+      LEFT JOIN identity_service.addresses a ON a.user_id = u.id
+      LEFT JOIN payment_service.payment_methods pm ON pm.user_id = u.id
+      WHERE u.id = $1
+      GROUP BY u.id, u.email, u.first_name, u.last_name, u.phone, u.created_at
+    `;
+    
+    const userResult = await dbConnection.query(userQuery, [userId]);
+    
+    if (userResult.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    const user = userResult[0];
+    
+    // Calculate confidence score based on multiple factors
+    const confidence = await _calculateRecognitionConfidence(user, deviceInfo, sessionData, merchantId);
+    
+    // Determine suggested checkout flow based on confidence
+    const suggestedFlow = _determineSuggestedFlow(confidence, user);
+    
+    // Get cross-merchant insights
+    const crossMerchantData = await _getCrossMerchantInsights(userId, merchantId);
+    
+    const responseTime = Date.now() - startTime;
+    
+    logger.info('User Recognition: Recognition completed', {
+      userId,
+      confidence: confidence.overall,
+      suggestedFlow,
+      responseTime
+    });
+    
+    return res.json({
+      success: true,
+      userId,
+      recognition: {
+        confidence: confidence.overall,
+        factors: confidence.factors,
+        suggestedFlow,
+        responseTime
+      },
+      user: {
+        merchantCount: user.merchant_count,
+        savedAddresses: user.saved_addresses,
+        savedPaymentMethods: user.saved_payment_methods,
+        lastActivity: user.last_activity,
+        accountAge: Math.floor((Date.now() - new Date(user.created_at).getTime()) / (1000 * 60 * 60 * 24))
+      },
+      crossMerchant: crossMerchantData
+    });
+    
+  } catch (error) {
+    const responseTime = Date.now() - startTime;
+    logger.error('User Recognition: Recognition failed', {
+      error: error.message,
+      userId: req.params.userId,
+      responseTime
+    });
+    
+    return res.status(500).json({
+      success: false,
+      error: 'Recognition processing failed',
+      responseTime
+    });
+  }
+});
+
+/**
+ * Calculate recognition confidence based on multiple factors
+ */
+async function _calculateRecognitionConfidence(user, deviceInfo, sessionData, merchantId) {
+  const factors = {};
+  
+  // Factor 1: Account completeness (0-0.25)
+  factors.accountCompleteness = _calculateAccountCompleteness(user);
+  
+  // Factor 2: Cross-merchant history (0-0.25)
+  factors.crossMerchantHistory = _calculateCrossMerchantHistory(user);
+  
+  // Factor 3: Device consistency (0-0.25)
+  factors.deviceConsistency = await _calculateDeviceConsistency(user.id, deviceInfo);
+  
+  // Factor 4: Behavioral patterns (0-0.15)
+  factors.behavioralPatterns = _calculateBehavioralPatterns(sessionData);
+  
+  // Factor 5: Security assessment (0-0.10)
+  factors.securityAssessment = _calculateSecurityAssessment(deviceInfo, sessionData);
+  
+  // Calculate overall confidence (weighted sum)
+  const overall = Math.min(
+    factors.accountCompleteness +
+    factors.crossMerchantHistory +
+    factors.deviceConsistency +
+    factors.behavioralPatterns +
+    factors.securityAssessment,
+    1.0
+  );
+  
+  return {
+    overall,
+    factors
+  };
+}
+
+function _calculateAccountCompleteness(user) {
+  let score = 0;
+  
+  // Basic profile completion (0-0.15)
+  if (user.email) score += 0.05;
+  if (user.first_name) score += 0.03;
+  if (user.last_name) score += 0.03;
+  if (user.phone) score += 0.04;
+  
+  // Data richness (0-0.10)
+  if (user.saved_addresses > 0) score += 0.05;
+  if (user.saved_payment_methods > 0) score += 0.05;
+  
+  return Math.min(score, 0.25);
+}
+
+function _calculateCrossMerchantHistory(user) {
+  let score = 0;
+  
+  // Number of merchants (0-0.15)
+  if (user.merchant_count >= 3) score += 0.15;
+  else if (user.merchant_count >= 2) score += 0.10;
+  else if (user.merchant_count >= 1) score += 0.05;
+  
+  // Recent activity (0-0.10)
+  if (user.last_activity) {
+    const daysSinceActivity = (Date.now() - new Date(user.last_activity).getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSinceActivity <= 7) score += 0.10;
+    else if (daysSinceActivity <= 30) score += 0.07;
+    else if (daysSinceActivity <= 90) score += 0.03;
+  }
+  
+  return Math.min(score, 0.25);
+}
+
+async function _calculateDeviceConsistency(userId, deviceInfo) {
+  if (!deviceInfo) return 0;
+  
+  try {
+    // Check for similar device fingerprints in recent sessions
+    const deviceQuery = `
+      SELECT device_fingerprint, COUNT(*) as usage_count
+      FROM identity_service.user_sessions
+      WHERE user_id = $1 AND created_at > NOW() - INTERVAL '30 days'
+      GROUP BY device_fingerprint
+      ORDER BY usage_count DESC
+      LIMIT 5
+    `;
+    
+    const deviceResult = await dbConnection.query(deviceQuery, [userId]);
+    
+    if (deviceResult.length === 0) return 0.05; // New device, minimal confidence
+    
+    // Simple device fingerprint comparison (in production, use more sophisticated matching)
+    const currentFingerprint = JSON.stringify({
+      userAgent: deviceInfo.userAgent,
+      screenSize: deviceInfo.screenSize,
+      timezone: deviceInfo.timezone
+    });
+    
+    for (const device of deviceResult) {
+      if (device.device_fingerprint === currentFingerprint) {
+        return Math.min(0.25, 0.10 + (device.usage_count * 0.03));
+      }
+    }
+    
+    return 0.08; // Different device, moderate confidence
+  } catch (error) {
+    logger.error('Device consistency calculation failed', error);
+    return 0.05;
+  }
+}
+
+function _calculateBehavioralPatterns(sessionData) {
+  if (!sessionData) return 0.05;
+  
+  let score = 0.05; // Base score for having session data
+  
+  // Realistic session patterns (0-0.10)
+  if (sessionData.timeOnSite > 30000 && sessionData.timeOnSite < 1800000) score += 0.05; // 30s - 30min
+  if (sessionData.pageViews > 1 && sessionData.pageViews < 50) score += 0.03;
+  if (sessionData.clickCount > 2 && sessionData.clickCount < 100) score += 0.02;
+  
+  return Math.min(score, 0.15);
+}
+
+function _calculateSecurityAssessment(deviceInfo, sessionData) {
+  let score = 0.05; // Base security score
+  
+  if (deviceInfo) {
+    // Legitimate browser indicators (0-0.05)
+    if (deviceInfo.userAgent && !deviceInfo.userAgent.includes('bot')) score += 0.02;
+    if (deviceInfo.timezone && deviceInfo.timezone !== 'Etc/UTC') score += 0.01;
+    if (deviceInfo.language) score += 0.01;
+    if (deviceInfo.screenSize && deviceInfo.screenSize !== '0x0') score += 0.01;
+  }
+  
+  return Math.min(score, 0.10);
+}
+
+function _determineSuggestedFlow(confidence, user) {
+  if (confidence.overall >= 0.8) {
+    return 'express'; // High confidence - skip verification steps
+  } else if (confidence.overall >= 0.5) {
+    return 'simplified'; // Medium confidence - minimal verification
+  } else {
+    return 'standard'; // Low confidence - full verification
+  }
+}
+
+async function _getCrossMerchantInsights(userId, currentMerchantId) {
+  try {
+    const insightsQuery = `
+      SELECT 
+        merchant_id,
+        last_seen,
+        purchase_count,
+        total_spent,
+        preferred_shipping_method,
+        preferred_payment_method
+      FROM identity_service.cross_merchant_identities cmi
+      LEFT JOIN (
+        SELECT 
+          user_id,
+          COUNT(*) as purchase_count,
+          SUM(total_amount) as total_spent
+        FROM payment_service.payment_intents
+        WHERE status = 'succeeded'
+        GROUP BY user_id
+      ) payments ON payments.user_id = cmi.user_id
+      WHERE cmi.user_id = $1 AND merchant_id != $2
+      ORDER BY last_seen DESC
+      LIMIT 5
+    `;
+    
+    const insights = await dbConnection.query(insightsQuery, [userId, currentMerchantId]);
+    
+    return {
+      merchantHistory: insights.map(row => ({
+        merchantId: row.merchant_id,
+        lastSeen: row.last_seen,
+        purchaseCount: row.purchase_count || 0,
+        totalSpent: row.total_spent || 0
+      })),
+      totalMerchants: insights.length
+    };
+  } catch (error) {
+    logger.error('Cross-merchant insights failed', error);
+    return {
+      merchantHistory: [],
+      totalMerchants: 0
+    };
+  }
+}
+
 module.exports = router; 
