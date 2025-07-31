@@ -132,8 +132,11 @@ class DatabaseConnection {
     try {
       const start = Date.now();
       
-      // Get client - no schema path needed since we use explicit schema references
+      // Get client and set search path for identity service schema
       const client = await this.pool.connect();
+      
+      // Set search path to include identity_service schema first, then public
+      await client.query('SET search_path TO identity_service, public');
       
       const result = await client.query(text, params);
       client.release();

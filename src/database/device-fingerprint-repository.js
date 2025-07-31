@@ -1982,7 +1982,7 @@ class DeviceFingerprintRepository {
           ORDER BY df.last_seen DESC
           LIMIT $1
         `;
-        values.unshift(merchantId);
+        values.push(merchantId);
       } else {
         query += `
           ORDER BY df.last_seen DESC

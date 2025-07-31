@@ -3336,16 +3336,47 @@ router.post('/recognize', sanitizeInput, async (req, res) => {
     
     logger.info('Device recognition request', { merchantId });
     
-    // Create fingerprint hash for lookup
-    const fingerprintString = typeof deviceFingerprint === 'string' 
-      ? deviceFingerprint 
-      : JSON.stringify(deviceFingerprint);
+    // Parse fingerprint components for lookup
+    let fingerprintComponents;
+    if (typeof deviceFingerprint === 'string') {
+      try {
+        fingerprintComponents = JSON.parse(deviceFingerprint);
+      } catch (e) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid deviceFingerprint format - must be valid JSON'
+        });
+      }
+    } else {
+      fingerprintComponents = deviceFingerprint;
+    }
     
-    // Look up device in database
-    const deviceRecord = await deviceFingerprintRepository.findByFingerprint(fingerprintString);
+    // Look up device in database using components
+    const deviceRecord = await deviceFingerprintRepository.findDeviceByComponents(
+      fingerprintComponents, 
+      { merchantId }
+    );
     
-    if (!deviceRecord || !deviceRecord.user_id) {
+    if (!deviceRecord) {
       // Device not recognized
+      return res.json({
+        success: true,
+        data: {
+          recognized: false,
+          confidence: 0,
+          userData: null
+        }
+      });
+    }
+    
+    // Find user associated with this device
+    const userAssociation = await crossMerchantIdentityRepository.findUserByDevice(
+      deviceRecord.id,
+      { merchantId }
+    );
+    
+    if (!userAssociation) {
+      // Device found but no user association
       return res.json({
         success: true,
         data: {
@@ -3376,8 +3407,8 @@ router.post('/recognize', sanitizeInput, async (req, res) => {
     // Ensure confidence is between 0 and 100
     confidence = Math.max(0, Math.min(100, confidence));
     
-    // Get user data
-    const userData = await userRepository.findById(deviceRecord.user_id);
+    // Get user data using universal ID from association
+    const userData = await userRepository.findById(userAssociation.universal_id);
     
     // Update last seen
     await deviceFingerprintRepository.updateLastSeen(deviceRecord.id);
@@ -3387,7 +3418,7 @@ router.post('/recognize', sanitizeInput, async (req, res) => {
       data: {
         recognized: true,
         confidence,
-        userId: deviceRecord.user_id,
+        userId: userAssociation.universal_id,
         userData: userData ? {
           id: userData.id,
           email: userData.email,
