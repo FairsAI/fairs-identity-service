@@ -55,74 +55,69 @@ const {
 // ============================================================================
 
 /**
- * Enhanced Authentication Middleware - Supports Service Tokens + Legacy Methods
- * CRITICAL SECURITY: Validates JWT tokens, Service tokens, and API keys
+ * JWT-Only Authentication Middleware
+ * PRE-LAUNCH VERSION: No API key support
  * 
- * This middleware uses the new @fairs/security-middleware for service auth
- * while maintaining backward compatibility with existing user JWT tokens
+ * Handles both user JWT tokens and service JWT tokens
  */
 const authenticateRequest = async (req, res, next) => {
   try {
-    // Check for API key or Authorization header
-    const apiKey = req.headers['x-api-key'];
     const authHeader = req.headers.authorization;
     
-    if (!apiKey && !authHeader) {
-      logger.warn('SECURITY: Unauthenticated request blocked', {
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      logger.warn('SECURITY: Missing bearer token', {
         ip: req.ip,
         userAgent: req.headers['user-agent'],
         endpoint: req.path
       });
       return res.status(401).json({
         success: false,
-        error: 'Authentication required',
-        code: 'AUTH_REQUIRED'
+        error: 'Bearer token required',
+        code: 'MISSING_AUTH_TOKEN',
+        hint: 'Include Authorization: Bearer <token> header'
       });
     }
     
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.substring(7);
-      
-      // Quick decode to check token type
-      const decoded = jwt.decode(token);
-      
-      if (decoded && decoded.tokenType === 'service' && decoded.serviceId) {
-        // Use enhanced service authentication from @fairs/security-middleware
-        return authenticateService({ 
-          allowApiKeys: true,
-          requiredPermissions: []  // Permissions checked separately
-        })(req, res, next);
-      } else {
-        // Regular JWT token validation for user auth
-        try {
-          const verified = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret-key');
-          req.user = verified;
-          req.merchantId = verified.merchantId;
-          logger.debug('JWT authentication successful', { 
-            userId: verified.userId, 
-            merchantId: verified.merchantId 
-          });
-        } catch (jwtError) {
-          logger.warn('JWT token validation failed', {
-            error: jwtError.message,
-            ip: req.ip
-          });
-          return res.status(401).json({
-            success: false,
-            error: 'Invalid or expired token',
-            code: 'INVALID_TOKEN'
-          });
-        }
-      }
-    } else if (apiKey) {
-      // Use enhanced service authentication for API keys
-      return authenticateService({ 
-        allowApiKeys: true,
-        requiredPermissions: []
-      })(req, res, next);
-    }
+    const token = authHeader.substring(7);
     
-    next();
+    // Quick decode to check token type
+    const decoded = jwt.decode(token);
+    
+    if (decoded && decoded.tokenType === 'service' && decoded.serviceId) {
+      // Service JWT token - use enhanced service authentication
+      return authenticateService({ 
+        requiredPermissions: []  // Permissions checked separately
+      })(req, res, next);
+    } else {
+      // User JWT token validation
+      try {
+        const verified = jwt.verify(token, process.env.JWT_SECRET || process.env.JWT_USER_SECRET);
+        
+        if (!verified.userId) {
+          throw new Error('Invalid token structure - missing userId');
+        }
+        
+        req.user = verified;
+        req.merchantId = verified.merchantId;
+        logger.debug('User JWT authentication successful', { 
+          userId: verified.userId, 
+          merchantId: verified.merchantId 
+        });
+        
+        next();
+      } catch (jwtError) {
+        logger.warn('JWT token validation failed', {
+          error: jwtError.message,
+          ip: req.ip
+        });
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid or expired token',
+          code: 'INVALID_TOKEN',
+          details: process.env.NODE_ENV === 'development' ? jwtError.message : undefined
+        });
+      }
+    }
   } catch (error) {
     logger.warn('SECURITY: Authentication failed', {
       error: error.message,

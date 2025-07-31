@@ -1,30 +1,27 @@
 /**
- * Enhanced Service Authentication Middleware
+ * Service Authentication Middleware
  * 
- * Supports both JWT service tokens (preferred) and API keys (legacy)
- * for backward compatibility during migration
+ * PRE-LAUNCH VERSION: JWT-only authentication
+ * - No API key support
+ * - All services must have SERVICE_ID and SERVICE_SECRET
+ * - Tokens expire and must be renewed
  */
 
 const { logger } = require('../utils/logger');
-const config = require('../config');
 const { authenticateServiceToken } = require('@fairs/security-middleware');
 
 /**
- * Enhanced service authentication that accepts both JWT tokens and API keys
+ * JWT-only service authentication
  * @param {Object} options - Authentication options
  * @returns {Function} Express middleware
  */
 function authenticateService(options = {}) {
   const {
-    allowApiKeys = true, // Support API keys during transition
-    requiredPermissions = [],
-    apiKeyHeader = 'x-api-key'
+    requiredPermissions = []
   } = options;
 
-  // Use the security middleware's authenticateServiceToken
+  // Use the JWT-only authenticateServiceToken from security middleware
   const jwtAuth = authenticateServiceToken({
-    allowApiKeys,
-    apiKeyHeader,
     requiredPermissions
   });
 
@@ -34,28 +31,19 @@ function authenticateService(options = {}) {
       await jwtAuth(req, res, (err) => {
         if (err) return next(err);
         
-        // Log authentication method for monitoring
+        // Log successful authentication
         if (req.service) {
-          const authMethod = req.service.tokenType === 'jwt' ? 'JWT Token' : 'API Key';
-          
           logger.info('Service authenticated', {
             serviceId: req.service.id,
             serviceName: req.service.name,
-            authMethod,
+            authMethod: 'JWT Token',
             path: req.path,
-            method: req.method
+            method: req.method,
+            permissions: req.service.permissions
           });
 
-          // Warn about API key usage to encourage migration
-          if (req.service.tokenType === 'api-key') {
-            logger.warn('API key authentication used - please migrate to JWT service tokens', {
-              path: req.path,
-              method: req.method
-            });
-          }
-
           // Add service info to response headers for debugging
-          res.setHeader('X-Service-Auth', authMethod);
+          res.setHeader('X-Service-Auth', 'JWT');
           res.setHeader('X-Service-ID', req.service.id);
         }
         
@@ -92,11 +80,6 @@ function requirePermissions(permissions = []) {
       });
     }
 
-    // API keys have all permissions during transition
-    if (req.service.tokenType === 'api-key') {
-      return next();
-    }
-
     // Check JWT token permissions
     const hasPermissions = permissions.every(perm => 
       req.service.permissions && req.service.permissions.includes(perm)
@@ -123,17 +106,14 @@ function requirePermissions(permissions = []) {
 }
 
 /**
- * Legacy API key validation for backward compatibility
  * @deprecated Use authenticateService instead
  */
 function validateApiKey(options = {}) {
-  logger.warn('validateApiKey is deprecated - use authenticateService instead');
-  
-  return authenticateService({
-    ...options,
-    allowApiKeys: true,
-    requiredPermissions: []
-  });
+  throw new Error(
+    'API key authentication is no longer supported. ' +
+    'Use authenticateService() for JWT-based authentication. ' +
+    'Ensure SERVICE_ID and SERVICE_SECRET are configured.'
+  );
 }
 
 /**
@@ -142,7 +122,7 @@ function validateApiKey(options = {}) {
  * @returns {boolean} True if authenticated
  */
 function isServiceAuthenticated(req) {
-  return !!(req.service && req.service.id);
+  return !!(req.service && req.service.id && req.service.tokenType === 'jwt');
 }
 
 /**
@@ -151,12 +131,12 @@ function isServiceAuthenticated(req) {
  * @returns {Object|null} Service info or null
  */
 function getServiceIdentity(req) {
-  if (!req.service) return null;
+  if (!req.service || req.service.tokenType !== 'jwt') return null;
   
   return {
     id: req.service.id,
     name: req.service.name,
-    type: req.service.tokenType,
+    type: 'jwt',
     permissions: req.service.permissions || []
   };
 }
@@ -164,7 +144,7 @@ function getServiceIdentity(req) {
 module.exports = {
   authenticateService,
   requirePermissions,
-  validateApiKey, // Deprecated but kept for compatibility
+  validateApiKey, // Deprecated but kept to throw error
   isServiceAuthenticated,
   getServiceIdentity
 };
