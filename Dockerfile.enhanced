@@ -6,33 +6,54 @@ RUN apk add --no-cache curl
 # Set working directory
 WORKDIR /app
 
-# Copy package files from identity service
+# Copy and install shared modules with their dependencies
+COPY ./shared/security-middleware /shared/security-middleware
+COPY ./shared/uuid-utils /shared/uuid-utils
+COPY ./shared/security-config /shared/security-config
+COPY ./shared-utils /shared/shared-utils
+
+# Install shared module dependencies
+WORKDIR /shared/shared-utils
+RUN npm install --only=production || true
+
+WORKDIR /shared/uuid-utils
+RUN npm install --only=production
+
+WORKDIR /shared/security-config
+RUN npm install --only=production
+
+WORKDIR /shared/security-middleware
+RUN npm install --only=production
+
+# Back to app directory
+WORKDIR /app
+
+# Copy identity service package files
 COPY ./fairs-identity-service/package*.json ./
 
-# Install dependencies
+# Update package.json to use absolute paths for shared modules
+RUN sed -i 's|"file:../shared-utils"|"file:/shared/shared-utils"|g' package.json && \
+    sed -i 's|"file:../shared/security-middleware"|"file:/shared/security-middleware"|g' package.json
+
+# Install production dependencies
 RUN npm install --only=production && npm cache clean --force
 
-# Copy security middleware and dependencies
-COPY ./shared/security-middleware /app/shared/security-middleware
-COPY ./shared/uuid-utils /app/shared/uuid-utils
-COPY ./shared/security-config /app/shared/security-config
-
-# Copy source code
+# Copy identity service application code
 COPY ./fairs-identity-service/. .
 
 # Setup directories and permissions
 RUN mkdir -p logs && \
-    chown -R node:node logs
+    chown -R node:node logs /app
 
 # Use non-root user
 USER node
 
 # Expose identity service port
-EXPOSE 3000
+EXPOSE 3002
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD curl -f http://localhost:3000/health || exit 1
+  CMD curl -f http://localhost:3002/health || exit 1
 
-# Start identity service (using regular server due to shared middleware issues)
-CMD ["node", "server.js"]
+# Start identity service with enhanced security
+CMD ["node", "server-enhanced.js"]
