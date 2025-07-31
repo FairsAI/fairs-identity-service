@@ -202,6 +202,29 @@ if (process.env.API_SIGNING_SECRET) {
     logger.warn('API_SIGNING_SECRET not configured - service-to-service signing disabled');
 }
 
+// Service authentication support for JWT tokens
+if (process.env.SERVICE_ID && process.env.SERVICE_SECRET) {
+    const { serviceClientMiddleware } = require('@fairs/security-middleware');
+    
+    // Attach service client to all requests for outgoing service calls
+    app.use(serviceClientMiddleware({
+        serviceId: process.env.SERVICE_ID,
+        serviceSecret: process.env.SERVICE_SECRET,
+        authServiceUrl: process.env.AUTH_SERVICE_URL || 'http://fairs-auth-service:3005'
+    }));
+    
+    logger.info('Service authentication enabled', {
+        serviceId: process.env.SERVICE_ID,
+        authServiceUrl: process.env.AUTH_SERVICE_URL || 'http://fairs-auth-service:3005'
+    });
+} else {
+    logger.warn('Service authentication not configured - SERVICE_ID and SERVICE_SECRET not set');
+}
+
+// Authentication metrics tracking
+const { trackAuthentication } = require('./src/middleware/auth-metrics');
+app.use(trackAuthentication);
+
 // API routes
 app.use('/api/identity', identityRoutes);
 app.use('/api/enhanced-schema', enhancedSchemaRoutes);

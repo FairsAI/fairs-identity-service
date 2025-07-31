@@ -42,6 +42,7 @@ const { sanitizeInput, sanitizeVerificationInput } = require('../middleware/inpu
 const { rateLimiter } = require('../middleware/rate-limiter');
 const { validateApiKey, validateMerchantAccess } = require('../middleware/auth-middleware');
 const { authenticateServiceOrUser, requireServiceAuth } = require('../middleware/service-auth-middleware');
+const { authenticateService, requirePermissions } = require('../middleware/service-auth-enhanced');
 const { 
   createValidationMiddleware, 
   validateParameters, 
@@ -56,6 +57,9 @@ const {
 /**
  * Enhanced Authentication Middleware - Supports Service Tokens + Legacy Methods
  * CRITICAL SECURITY: Validates JWT tokens, Service tokens, and API keys
+ * 
+ * This middleware uses the new @fairs/security-middleware for service auth
+ * while maintaining backward compatibility with existing user JWT tokens
  */
 const authenticateRequest = async (req, res, next) => {
   try {
@@ -83,10 +87,13 @@ const authenticateRequest = async (req, res, next) => {
       const decoded = jwt.decode(token);
       
       if (decoded && decoded.tokenType === 'service' && decoded.serviceId) {
-        // Use service token authentication middleware
-        return authenticateServiceOrUser({ requiredPermissions: ['identity:read'] })(req, res, next);
+        // Use enhanced service authentication from @fairs/security-middleware
+        return authenticateService({ 
+          allowApiKeys: true,
+          requiredPermissions: []  // Permissions checked separately
+        })(req, res, next);
       } else {
-        // Regular JWT token validation
+        // Regular JWT token validation for user auth
         try {
           const verified = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret-key');
           req.user = verified;
@@ -108,26 +115,11 @@ const authenticateRequest = async (req, res, next) => {
         }
       }
     } else if (apiKey) {
-      // Legacy API key validation - maintained for backward compatibility
-      if (apiKey.length < 32) {
-        return res.status(401).json({
-          success: false,
-          error: 'Invalid API key format',
-          code: 'INVALID_API_KEY'
-        });
-      }
-      req.apiKey = apiKey;
-      
-      // Extract merchant ID from header for API key authentication
-      req.merchantId = req.headers['x-fairs-merchant'];
-      
-      logger.debug('API key authentication successful', { merchantId: req.merchantId });
-    } else {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid authentication method',
-        code: 'AUTH_INVALID'
-      });
+      // Use enhanced service authentication for API keys
+      return authenticateService({ 
+        allowApiKeys: true,
+        requiredPermissions: []
+      })(req, res, next);
     }
     
     next();
@@ -2974,6 +2966,58 @@ router.get('/health', (req, res) => {
     }
   });
 });
+
+/**
+ * Authentication metrics endpoint - track JWT migration progress
+ * GET /api/identity/metrics/auth
+ * 
+ * Requires service authentication to access
+ */
+router.get('/metrics/auth', authenticateService({ allowApiKeys: true }), (req, res) => {
+  const { getAuthMetrics } = require('../middleware/auth-metrics');
+  
+  const metrics = getAuthMetrics();
+  
+  logger.info('Authentication metrics requested', {
+    requestedBy: req.service?.name || 'unknown',
+    totalRequests: metrics.summary.totalServiceRequests
+  });
+  
+  res.json(metrics);
+});
+
+/**
+ * Reset authentication metrics - for testing
+ * POST /api/identity/metrics/auth/reset
+ * 
+ * Only available in development mode
+ */
+if (process.env.NODE_ENV !== 'production') {
+  router.post('/metrics/auth/reset', authenticateService({ allowApiKeys: true }), (req, res) => {
+    const { resetMetrics } = require('../middleware/auth-metrics');
+    
+    // Extra check - only allow specific services to reset
+    const allowedServices = ['api-orchestrator', 'admin-service'];
+    if (!allowedServices.includes(req.service?.id)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Service not authorized to reset metrics'
+      });
+    }
+    
+    resetMetrics();
+    
+    logger.warn('Authentication metrics reset', {
+      resetBy: req.service?.name || 'unknown',
+      timestamp: new Date().toISOString()
+    });
+    
+    res.json({
+      success: true,
+      message: 'Authentication metrics reset successfully'
+    });
+  });
+}
 
 // ============================================================================
 // USER RECOGNITION ENDPOINT - Production Integration
