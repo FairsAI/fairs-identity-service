@@ -108,7 +108,7 @@ function requirePermissions(permissions = []) {
 /**
  * @deprecated Use authenticateService instead
  */
-function validateApiKey(options = {}) {
+function validateJWT(options = {}) {
   throw new Error(
     'API key authentication is no longer supported. ' +
     'Use authenticateService() for JWT-based authentication. ' +
@@ -144,7 +144,7 @@ function getServiceIdentity(req) {
 module.exports = {
   authenticateService,
   requirePermissions,
-  validateApiKey, // Deprecated but kept to throw error
+  validateJWT, // Deprecated but kept to throw error
   isServiceAuthenticated,
   getServiceIdentity
 };

@@ -40,7 +40,7 @@ const { validateVerification, sanitizeString, validatePaymentInput } = require('
 const { eventBus } = require('../events/event-bus');
 const { sanitizeInput, sanitizeVerificationInput } = require('../middleware/input-sanitization');
 const { rateLimiter } = require('../middleware/rate-limiter');
-const { validateApiKey, validateMerchantAccess } = require('../middleware/auth-middleware');
+const { validateJWT, validateMerchantAccess } = require('../middleware/auth-middleware');
 const { authenticateServiceOrUser, requireServiceAuth } = require('../middleware/service-auth-middleware');
 const { authenticateService, requirePermissions } = require('../middleware/service-auth-enhanced');
 const { 

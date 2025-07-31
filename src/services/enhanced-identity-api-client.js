@@ -10,7 +10,7 @@ const { dbConnection } = require('../database/db-connection');
 class EnhancedIdentityAPIClient {
   constructor(options = {}) {
     this.baseURL = options.baseURL || 'http://localhost:3002';
-    this.apiKey = this.validateApiKey(options.apiKey || process.env.IDENTITY_SERVICE_API_KEY);
+    this.jwtToken = this.validateJWT(options.jwtToken || process.env.IDENTITY_SERVICE_JWT_SECRET);
     this.timeout = options.timeout || 30000;
     this.logger = logger.child({ service: 'enhanced-identity-api-client' });
   }

@@ -86,7 +86,7 @@ app.use(secureCORS({
         'http://localhost:3002'
     ],
     credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-csrf-token', 'x-signature', 'x-timestamp'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Authorization', 'x-csrf-token', 'x-signature', 'x-timestamp'],
     exposedHeaders: ['x-csrf-token']
 }));
 

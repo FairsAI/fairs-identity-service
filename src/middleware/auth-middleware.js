@@ -14,28 +14,28 @@ const config = require('../config');
  * @param {Object} options - Configuration options
  * @returns {Function} - Express middleware function
  */
-function validateApiKey(options = {}) {
-  const apiKeyHeader = options.header || 'x-api-key';
+function validateJWT(options = {}) {
+  const jwtTokenHeader = options.header || 'Authorization';
   
   // SECURITY: Get API keys from secure configuration
   // NO hardcoded credentials allowed
   const validApiKeys = config.api?.validApiKeys || [];
   
   if (validApiKeys.length === 0 && config.env !== 'test') {
-    throw new Error('SECURITY ERROR: No valid API keys configured. Set VALID_API_KEYS environment variable.');
+    throw new Error('SECURITY ERROR: No valid API keys configured. Set VALID_JWT_SECRETS environment variable.');
   }
   
-  const apiKeys = new Set(validApiKeys);
+  const jwtTokens = new Set(validApiKeys);
   
   return (req, res, next) => {
-    const apiKey = req.headers[apiKeyHeader.toLowerCase()];
+    const jwtToken = req.headers[jwtTokenHeader.toLowerCase()];
     
     // Skip validation for excluded paths
     if (options.excludePaths && options.excludePaths.some(path => req.path.startsWith(path))) {
       return next();
     }
     
-    if (!apiKey) {
+    if (!jwtToken) {
       logger.warn(`API request missing API key: ${req.method} ${req.path}`);
       return res.status(401).json({
         success: false,
@@ -43,7 +43,7 @@ function validateApiKey(options = {}) {
       });
     }
     
-    if (!apiKeys.has(apiKey)) {
+    if (!jwtTokens.has(jwtToken)) {
       logger.warn(`Invalid API key used: ${req.method} ${req.path}`);
       return res.status(403).json({
         success: false,
@@ -52,8 +52,8 @@ function validateApiKey(options = {}) {
     }
     
     // Store API key info in request for later use
-    req.apiKeyInfo = {
-      key: apiKey,
+    req.jwtTokenInfo = {
+      key: jwtToken,
       isValid: true
     };
     
@@ -88,9 +88,9 @@ function validateMerchantAccess(options = {}) {
       req.merchantId = merchantId;
       
       // SECURITY: Always require API key authentication - NEVER skip validation
-      const apiKey = req.apiKeyInfo?.key;
+      const jwtToken = req.jwtTokenInfo?.key;
       
-      if (!apiKey) {
+      if (!jwtToken) {
         logger.error(`SECURITY VIOLATION: Missing API key for merchant access attempt`, {
           merchantId,
           path: req.path,
@@ -107,7 +107,7 @@ function validateMerchantAccess(options = {}) {
       // If we have a merchant-to-apikey mapping, validate it
       if (config.api?.merchantApiKeys && Object.keys(config.api.merchantApiKeys).length > 0) {
         // Check if this API key is authorized for this merchant
-        const authorizedMerchants = config.api.merchantApiKeys[apiKey] || [];
+        const authorizedMerchants = config.api.merchantApiKeys[jwtToken] || [];
         const hasAccess = authorizedMerchants.includes(merchantId);
         
         // SECURITY: Wildcard permissions removed - explicit merchant authorization required
@@ -115,7 +115,7 @@ function validateMerchantAccess(options = {}) {
         
         if (!hasAccess) {
           logger.warn(`Unauthorized merchant access attempt: API key not authorized for merchant ${merchantId}`, {
-            apiKeyPrefix: apiKey.substring(0, 8) + '...',
+            jwtTokenPrefix: jwtToken.substring(0, 8) + '...',
             merchantId,
             path: req.path,
             ip: req.ip
@@ -129,7 +129,7 @@ function validateMerchantAccess(options = {}) {
         // No merchant mapping configured - require API key but allow access
         logger.debug(`API key validated for merchant access (no specific mapping)`, {
           merchantId,
-          apiKeyPrefix: apiKey.substring(0, 8) + '...'
+          jwtTokenPrefix: jwtToken.substring(0, 8) + '...'
         });
       }
       
@@ -218,12 +218,12 @@ function validateJwtToken(options = {}) {
  * @returns {Function} - Express middleware function
  */
 function requireAuthentication(options = {}) {
-  const apiKeyValidator = validateApiKey(options);
+  const jwtTokenValidator = validateJWT(options);
   const jwtValidator = validateJwtToken(options);
   
   return (req, res, next) => {
     // First validate API key
-    apiKeyValidator(req, res, (err) => {
+    jwtTokenValidator(req, res, (err) => {
       if (err) return next(err);
       
       // Then validate JWT token
@@ -274,7 +274,7 @@ function authenticationRateLimit(options = {}) {
 }
 
 module.exports = {
-  validateApiKey,
+  validateJWT,
   validateMerchantAccess,
   validateJwtToken,
   requireAuthentication,

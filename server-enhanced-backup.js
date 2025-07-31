@@ -45,7 +45,7 @@ app.use(cors({
     origin: config.security?.corsOrigins || ['http://localhost:3000', 'http://localhost:3007'],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'x-csrf-token']
+    allowedHeaders: ['Content-Type', 'Authorization', 'Authorization', 'x-csrf-token']
 }));
 
 // Body parsing middleware

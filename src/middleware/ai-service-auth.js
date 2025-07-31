@@ -18,7 +18,7 @@ const { logger } = require('../utils/logger');
 
 // Authentication configuration
 const AI_SERVICE_CONFIG = {
-  API_KEY: process.env.AI_SERVICE_API_KEY,
+  JWT_SECRET: process.env.AI_SERVICE_JWT_SECRET,
   JWT_SECRET: process.env.AI_SERVICE_JWT_SECRET,
   JWT_EXPIRY: process.env.AI_SERVICE_JWT_EXPIRY || '1h',
   SERVICE_ID: process.env.AI_SERVICE_ID || 'checkout-service',
@@ -34,7 +34,7 @@ const authFailures = new Map();
  * Validates environment configuration for AI service authentication
  */
 function validateAuthConfig() {
-  const required = ['AI_SERVICE_API_KEY', 'AI_SERVICE_JWT_SECRET', 'AI_SERVICE_HMAC_SECRET'];
+  const required = ['AI_SERVICE_JWT_SECRET', 'AI_SERVICE_JWT_SECRET', 'AI_SERVICE_HMAC_SECRET'];
   const missing = required.filter(key => !process.env[key]);
   
   if (missing.length > 0) {
@@ -192,7 +192,7 @@ function createAuthHeaders(requestBody = {}) {
     
     return {
       'Authorization': `Bearer ${token}`,
-      'X-API-Key': AI_SERVICE_CONFIG.API_KEY,
+      'Authorization': AI_SERVICE_CONFIG.JWT_SECRET,
       'X-Request-Signature': signature,
       'X-Request-Timestamp': timestamp.toString(),
       'X-Service-ID': AI_SERVICE_CONFIG.SERVICE_ID,

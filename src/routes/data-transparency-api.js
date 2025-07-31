@@ -20,10 +20,10 @@ const { logger } = require('../utils/logger');
 const authenticateRequest = async (req, res, next) => {
   try {
     // Check for API key or JWT token
-    const apiKey = req.headers['x-api-key'];
+    const jwtToken = req.headers['Authorization'];
     const authHeader = req.headers.authorization;
     
-    if (!apiKey && !authHeader) {
+    if (!jwtToken && !authHeader) {
       logger.warn('SECURITY: Unauthenticated transparency data request blocked', {
         ip: req.ip,
         userAgent: req.headers['user-agent'],
@@ -42,16 +42,16 @@ const authenticateRequest = async (req, res, next) => {
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret-key');
       req.user = decoded;
       logger.debug('Transparency data JWT authentication successful', { userId: decoded.user_id });
-    } else if (apiKey) {
+    } else if (jwtToken) {
       // Basic API key validation
-      if (apiKey.length < 32) {
+      if (jwtToken.length < 32) {
         return res.status(401).json({
           success: false,
           error: 'Invalid API key format for transparency data',
-          code: 'INVALID_TRANSPARENCY_API_KEY'
+          code: 'INVALID_TRANSPARENCY_JWT_SECRET'
         });
       }
-      req.apiKey = apiKey;
+      req.jwtToken = jwtToken;
       logger.debug('Transparency data API key authentication successful');
     } else {
       return res.status(401).json({

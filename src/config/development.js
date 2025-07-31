@@ -77,7 +77,7 @@ module.exports = {
     destination: 'console',
     redactFields: [
       'password',
-      'apiKey',
+      'jwtToken',
       'secret',
       'token',
       'accessToken',
@@ -136,9 +136,9 @@ module.exports = {
       contentSecurityPolicy: false, // Disable for development
       xssFilter: true
     },
-    apiKey: {
+    jwtToken: {
       enabled: false, // Disable for development
-      headerName: 'x-api-key'
+      headerName: 'Authorization'
     }
   }
 }; 

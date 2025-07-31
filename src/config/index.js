@@ -40,7 +40,7 @@ function validateRequiredEnvironmentVariables(requiredVars) {
     }
     
     // Validate API keys
-    if (varName.includes('API_KEY') && value.length < 16) {
+    if (varName.includes('JWT_SECRET') && value.length < 16) {
       weak.push(`${varName} (API key too short)`);
     }
   }
@@ -70,7 +70,7 @@ const requiredVars = env === 'production'
       'DB_PASSWORD',
       'JWT_SECRET',
       'API_ENCRYPTION_KEY',
-      'VALID_API_KEYS'
+      'VALID_JWT_SECRETS'
     ]
   : env === 'development'
     ? [
@@ -86,7 +86,7 @@ if (env !== 'test') {
 
 // Tilled API configuration - OPTIONAL (not used by identity service)
 const tilledConfig = {
-  apiKey: process.env.TILLED_API_KEY,
+  jwtToken: process.env.TILLED_JWT_SECRET,
   apiUrl: process.env.TILLED_API_URL || (env === 'production' ? 'https://api.tilled.com/v1' : 'https://sandbox-api.tilled.com/v1'),
   merchantId: process.env.TILLED_MERCHANT_ID,
   publicKey: process.env.TILLED_PUBLIC_KEY,
@@ -132,7 +132,7 @@ if (env === 'test') {
 
 // API Security Configuration - NO DEFAULTS
 const apiConfig = {
-  validApiKeys: process.env.VALID_API_KEYS ? process.env.VALID_API_KEYS.split(',').map(key => key.trim()) : [],
+  validApiKeys: process.env.VALID_JWT_SECRETS ? process.env.VALID_JWT_SECRETS.split(',').map(key => key.trim()) : [],
   jwtSecret: process.env.JWT_SECRET,
   encryptionKey: process.env.API_ENCRYPTION_KEY,
   sessionTimeout: parseInt(process.env.SESSION_TIMEOUT || '3600', 10), // 1 hour default
@@ -143,7 +143,7 @@ const apiConfig = {
 // Validate API configuration
 if (env !== 'test') {
   if (apiConfig.validApiKeys.length === 0) {
-    throw new Error('SECURITY ERROR: No valid API keys configured. Set VALID_API_KEYS environment variable.');
+    throw new Error('SECURITY ERROR: No valid API keys configured. Set VALID_JWT_SECRETS environment variable.');
   }
   
   if (!apiConfig.jwtSecret) {
@@ -228,7 +228,7 @@ if (env !== 'test') {
   console.log(`   JWT Secret: ${config.api.jwtSecret ? '✅ SET' : '❌ MISSING'}`);
   console.log(`   Encryption Key: ${config.api.encryptionKey ? '✅ SET' : '❌ MISSING'}`);
   console.log(`   Database: ${config.database.host ? '✅ CONFIGURED' : '❌ MISSING'}`);
-  console.log(`   Tilled API: ${config.tilled.apiKey ? '✅ SET' : '⚠️  NOT REQUIRED'}`);
+  console.log(`   Tilled API: ${config.tilled.jwtToken ? '✅ SET' : '⚠️  NOT REQUIRED'}`);
   console.log(`   Twilio: ${config.twilio.enabled ? '✅ ENABLED' : '⚠️  DISABLED'}`);
 }
 

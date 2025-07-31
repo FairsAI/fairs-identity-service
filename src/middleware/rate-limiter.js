@@ -357,10 +357,10 @@ function defaultHandler(req, res, next, options) {
 /**
  * ✅ SECURE: API key based rate limiting
  */
-function apiKeyRateLimiter(options = {}) {
+function jwtTokenRateLimiter(options = {}) {
   const keyGenerator = (req) => {
-    const apiKey = req.headers['x-api-key'];
-    return apiKey ? `api:${apiKey.substring(0, 8)}` : `ip:${req.ip}`;
+    const jwtToken = req.headers['Authorization'];
+    return jwtToken ? `api:${jwtToken.substring(0, 8)}` : `ip:${req.ip}`;
   };
   
   return rateLimiter({
@@ -381,7 +381,7 @@ function createRateLimiter(config) {
 // ✅ SECURE: Enhanced exports with proper cleanup
 module.exports = {
   rateLimiter,
-  apiKeyRateLimiter,
+  jwtTokenRateLimiter,
   createRateLimiter,
   defaultHandler,
   globalLimitStore,

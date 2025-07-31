@@ -86,7 +86,7 @@ module.exports = {
     },
     redactFields: [
       'password',
-      'apiKey',
+      'jwtToken',
       'secret',
       'token',
       'accessToken',
@@ -111,7 +111,7 @@ module.exports = {
     },
     statusPage: {
       enabled: true,
-      apiKey: process.env.STATUS_PAGE_API_KEY,
+      jwtToken: process.env.STATUS_PAGE_JWT_SECRET,
       pageId: process.env.STATUS_PAGE_ID,
       componentMapping: {
         'tilled': process.env.STATUS_PAGE_TILLED_COMPONENT_ID,
@@ -120,14 +120,14 @@ module.exports = {
     },
     datadog: {
       enabled: true,
-      apiKey: process.env.DATADOG_API_KEY,
+      jwtToken: process.env.DATADOG_JWT_SECRET,
       appKey: process.env.DATADOG_APP_KEY,
       tags: ['env:production', 'service:fairs-checkout']
     },
     alerting: {
       pagerDuty: {
         enabled: true,
-        apiKey: process.env.PAGERDUTY_API_KEY,
+        jwtToken: process.env.PAGERDUTY_JWT_SECRET,
         serviceId: process.env.PAGERDUTY_SERVICE_ID
       }
     }
@@ -178,10 +178,10 @@ module.exports = {
         preload: true
       }
     },
-    apiKey: {
+    jwtToken: {
       enabled: true,
-      headerName: 'x-api-key',
-      keys: process.env.API_KEYS ? process.env.API_KEYS.split(',') : []
+      headerName: 'Authorization',
+      keys: process.env.JWT_SECRETS ? process.env.JWT_SECRETS.split(',') : []
     }
   },
   
