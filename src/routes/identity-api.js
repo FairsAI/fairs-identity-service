@@ -1860,7 +1860,7 @@ router.get('/test-db-connection', authenticateRequest, async (req, res) => {
  *   }
  * }
  */
-router.post('/identity/lookup', authenticateRequest, validateAndSanitizeInput, validateCrossMerchantAccess, async (req, res) => {
+router.post('/lookup', authenticateRequest, validateAndSanitizeInput, validateCrossMerchantAccess, async (req, res) => {
   logger.info({
     message: 'Processing identity lookup request',
     lookupType: req.body.lookupType,
