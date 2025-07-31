@@ -113,7 +113,8 @@ app.use(csrfProtection({
     excludePaths: [
         '/health',
         '/metrics',
-        '/api/identity/lookup', // Public lookup endpoint for service calls
+        '/api/identity/identity/lookup', // Public lookup endpoint for service calls
+        '/api/identity/lookup', // Legacy path
         '/api/identity/resolve', // Public resolution endpoint
         '/api/identity/batch-lookup', // Batch operations
         '/api/identity/device-fingerprint', // Device fingerprinting
