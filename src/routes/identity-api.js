@@ -3278,4 +3278,95 @@ async function _getCrossMerchantInsights(userId, currentMerchantId) {
   }
 }
 
+/**
+ * Device recognition endpoint
+ * POST /api/identity/recognize
+ * 
+ * Recognizes a device and returns user information if found
+ */
+router.post('/recognize', sanitizeInput, async (req, res) => {
+  try {
+    const { deviceFingerprint, merchantId } = req.body;
+    
+    if (!deviceFingerprint || !merchantId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: deviceFingerprint and merchantId'
+      });
+    }
+    
+    logger.info('Device recognition request', { merchantId });
+    
+    // Create fingerprint hash for lookup
+    const fingerprintString = typeof deviceFingerprint === 'string' 
+      ? deviceFingerprint 
+      : JSON.stringify(deviceFingerprint);
+    
+    // Look up device in database
+    const deviceRecord = await deviceFingerprintRepository.findByFingerprint(fingerprintString);
+    
+    if (!deviceRecord || !deviceRecord.user_id) {
+      // Device not recognized
+      return res.json({
+        success: true,
+        data: {
+          recognized: false,
+          confidence: 0,
+          userData: null
+        }
+      });
+    }
+    
+    // Calculate confidence based on last seen and other factors
+    const lastSeen = new Date(deviceRecord.last_seen_at);
+    const daysSinceLastSeen = Math.floor((Date.now() - lastSeen) / (1000 * 60 * 60 * 24));
+    
+    // Base confidence starts at 90 for recognized device
+    let confidence = 90;
+    
+    // Reduce confidence based on time since last seen
+    if (daysSinceLastSeen > 30) confidence -= 20;
+    else if (daysSinceLastSeen > 14) confidence -= 10;
+    else if (daysSinceLastSeen > 7) confidence -= 5;
+    
+    // Check if device is trusted
+    if (deviceRecord.is_trusted) {
+      confidence += 5;
+    }
+    
+    // Ensure confidence is between 0 and 100
+    confidence = Math.max(0, Math.min(100, confidence));
+    
+    // Get user data
+    const userData = await userRepository.findById(deviceRecord.user_id);
+    
+    // Update last seen
+    await deviceFingerprintRepository.updateLastSeen(deviceRecord.id);
+    
+    res.json({
+      success: true,
+      data: {
+        recognized: true,
+        confidence,
+        userId: deviceRecord.user_id,
+        userData: userData ? {
+          id: userData.id,
+          email: userData.email,
+          phone: userData.phone,
+          firstName: userData.first_name,
+          lastName: userData.last_name
+        } : null,
+        lastSeen: deviceRecord.last_seen_at
+      }
+    });
+    
+  } catch (error) {
+    logger.error('Device recognition error', error);
+    res.status(500).json({
+      success: false,
+      error: 'Device recognition failed'
+    });
+  }
+});
+
 module.exports = router; 
