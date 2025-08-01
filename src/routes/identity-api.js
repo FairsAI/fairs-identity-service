@@ -50,6 +50,9 @@ const {
   emailSchema 
 } = require('../middleware/validation-middleware');
 
+// Profile Service integration for backward compatibility during migration
+const { profileServiceClient } = require('../services/profile-service-client');
+
 // ============================================================================
 // 🚨 CRITICAL SECURITY FIXES - AUTHENTICATION & RATE LIMITING
 // ============================================================================
@@ -367,6 +370,112 @@ const sanitizeErrorResponse = (error, context = '') => {
 };
 
 // ============================================================================
+// PROFILE SERVICE INTEGRATION HELPERS
+// ============================================================================
+
+/**
+ * Merge profile data from Profile Service with identity data
+ * Maintains backward compatibility during migration
+ * @param {Object} identityUser - User data from Identity Service
+ * @param {string} serviceToken - Service JWT token for Profile Service calls
+ * @returns {Object} Merged user data with profile fields
+ */
+const mergeProfileData = async (identityUser, serviceToken) => {
+  try {
+    if (!identityUser || !identityUser.id) {
+      return identityUser;
+    }
+
+    // Set service token for Profile Service authentication
+    if (serviceToken) {
+      profileServiceClient.setServiceToken(serviceToken);
+    }
+
+    // Fetch profile data from Profile Service
+    const profile = await profileServiceClient.getProfile(identityUser.id);
+    
+    if (!profile) {
+      // No profile found - return identity data with existing fields
+      logger.debug('No profile found in Profile Service, using Identity Service data', {
+        userId: identityUser.id
+      });
+      return identityUser;
+    }
+
+    // Merge profile data with identity data
+    // Profile Service data takes precedence for profile fields
+    const mergedUser = {
+      ...identityUser,
+      // Profile fields from Profile Service (override Identity Service)
+      firstName: profile.firstName || identityUser.first_name || identityUser.firstName,
+      lastName: profile.lastName || identityUser.last_name || identityUser.lastName,
+      first_name: profile.firstName || identityUser.first_name, // Legacy field name
+      last_name: profile.lastName || identityUser.last_name,    // Legacy field name
+      displayName: profile.displayName,
+      
+      // Additional profile data not in Identity Service
+      preferredLanguage: profile.preferredLanguage,
+      preferredCurrency: profile.preferredCurrency,
+      profileCompletionScore: profile.profileCompletionScore,
+      
+      // Preferences from Profile Service
+      preferences: {
+        expressCheckoutEnabled: profile.expressCheckoutEnabled,
+        autoFillEnabled: profile.autoFillEnabled,
+        oneClickEnabled: profile.oneClickEnabled,
+        savePaymentMethods: profile.savePaymentMethods,
+        checkoutSpeedPreference: profile.checkoutSpeedPreference
+      },
+      
+      // Metadata
+      profileServiceIntegrated: true,
+      profileLastUpdated: profile.updatedAt
+    };
+
+    logger.info('Successfully merged Profile Service data', {
+      userId: identityUser.id,
+      hasProfileData: true,
+      profileFields: ['firstName', 'lastName', 'displayName', 'preferences']
+    });
+
+    return mergedUser;
+    
+  } catch (error) {
+    // If Profile Service is unavailable, gracefully degrade
+    logger.warn('Failed to fetch profile data, using Identity Service data only', {
+      userId: identityUser.id,
+      error: error.message
+    });
+    
+    // Add flag to indicate profile data is not available
+    return {
+      ...identityUser,
+      profileServiceIntegrated: false,
+      profileServiceError: true
+    };
+  }
+};
+
+/**
+ * Get service token from request for Profile Service calls
+ * @param {Object} req - Express request object
+ * @returns {string|null} Service token if available
+ */
+const getServiceToken = (req) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    const decoded = jwt.decode(token);
+    
+    // Only use service tokens for Profile Service calls
+    if (decoded && decoded.tokenType === 'service') {
+      return token;
+    }
+  }
+  return null;
+};
+
+// ============================================================================
 // SECURITY MIDDLEWARE APPLICATION
 // ============================================================================
 
@@ -451,17 +560,44 @@ router.post('/users', authenticateRequest, validateAndSanitizeInput, async (req,
       email: createdUser.email 
     });
     
-    res.json({ 
-      success: true, 
-      user: {
+    // Create profile in Profile Service for new user
+    const serviceToken = getServiceToken(req);
+    if (serviceToken) {
+      const profileData = {
         id: createdUser.id,
         email: createdUser.email,
-        firstName: createdUser.first_name,
-        lastName: createdUser.last_name,
-        phone: createdUser.phone,
-        temporary: temporary || false,
-        consented: consented || false
-      },
+        firstName: firstName || null,
+        lastName: lastName || null,
+        phone: phone || null,
+        displayName: `${firstName || ''} ${lastName || ''}`.trim() || email.split('@')[0],
+        isGhostUser: temporary || false,
+        profileCompletionScore: 20, // Basic profile created
+        createdAt: new Date().toISOString()
+      };
+      
+      const profile = await profileServiceClient.createProfile(profileData);
+      if (profile) {
+        logger.info('Profile created in Profile Service for new user', {
+          userId: createdUser.id,
+          profileId: profile.id
+        });
+      }
+    }
+    
+    // Merge profile data if available
+    const userWithProfile = await mergeProfileData({
+      id: createdUser.id,
+      email: createdUser.email,
+      first_name: createdUser.first_name,
+      last_name: createdUser.last_name,
+      phone: createdUser.phone,
+      temporary: temporary || false,
+      consented: consented || false
+    }, serviceToken);
+    
+    res.json({ 
+      success: true, 
+      user: userWithProfile,
       message: 'User created successfully in identity service'
     });
   } catch (error) {
@@ -502,17 +638,21 @@ router.get('/users/:userId', authenticateRequest, validateAndSanitizeInput, asyn
       email: user.email 
     });
     
+    // Merge profile data from Profile Service
+    const serviceToken = getServiceToken(req);
+    const userWithProfile = await mergeProfileData({
+      id: user.id,
+      email: user.email,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      phone: user.phone,
+      temporary: false,
+      consented: true
+    }, serviceToken);
+    
     res.json({ 
       success: true, 
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name,
-        phone: user.phone,
-        temporary: false,
-        consented: true
-      }
+      user: userWithProfile
     });
   } catch (error) {
     const sanitizedError = sanitizeErrorResponse(error, 'get user by ID');
@@ -2023,9 +2163,19 @@ router.post('/lookup', authenticateRequest, validateAndSanitizeInput, validateCr
         lookupType
       });
       
+      // Merge profile data from Profile Service
+      const serviceToken = getServiceToken(req);
+      const userWithProfile = await mergeProfileData({
+        ...user,
+        id: user.universalId, // Profile Service expects 'id' field
+        // Map Identity Service fields to expected format
+        first_name: user.name ? user.name.split(' ')[0] : null,
+        last_name: user.name ? user.name.split(' ').slice(1).join(' ') : null
+      }, serviceToken);
+      
       res.json({
         success: true,
-        user: user
+        user: userWithProfile
       });
     } else {
       logger.info({
