@@ -19,7 +19,7 @@ class UserRepository {
       logger.debug('Getting user by ID', { userId });
       
       const query = `
-        SELECT id, email, first_name, last_name, phone,
+        SELECT id, email,
                is_guest, member_converted_at,
                created_at, updated_at, is_active
         FROM identity_service.users 
@@ -51,7 +51,7 @@ class UserRepository {
       logger.debug('Getting user by email', { email });
       
       const query = `
-        SELECT id, email, first_name, last_name, phone, 
+        SELECT id, email, 
                is_guest, member_converted_at,
                created_at, updated_at, is_active
         FROM identity_service.users 
@@ -77,34 +77,24 @@ class UserRepository {
    * Create a new user
    * @param {Object} userData - User data
    * @param {string} userData.email - User email
-   * @param {string} userData.firstName - User first name
-   * @param {string} userData.lastName - User last name
-   * @param {string} userData.phone - User phone number
    * @param {string} userData.password - User password (optional)
+   * @param {boolean} userData.is_guest - Is guest user
+   * @param {Date} userData.member_converted_at - Member conversion date
    * @returns {Promise<Object>} Created user object
+   * 
+   * Note: Profile data (firstName, lastName, phone) is now managed by Profile Service
    */
   async createUser(userData) {
     try {
       const { 
         email, 
-        firstName, 
-        first_name,
-        lastName, 
-        last_name,
-        phone, 
         password,
         is_guest,
         member_converted_at,
       } = userData;
       
-      // Handle both camelCase and snake_case field names
-      const finalFirstName = firstName || first_name;
-      const finalLastName = lastName || last_name;
-      
       logger.debug('Creating new user', { 
         email, 
-        firstName: finalFirstName, 
-        lastName: finalLastName,
         isGuest: is_guest 
       });
       
@@ -128,12 +118,12 @@ class UserRepository {
         // For guest-to-member conversion where ID is already known
         query = `
           INSERT INTO identity_service.users (
-            id, email, first_name, last_name, phone, password_hash, 
+            id, email, password_hash, 
             is_guest, member_converted_at,
             created_at, updated_at, is_active
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW(), true)
-          RETURNING id, email, first_name, last_name, phone, 
+          VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), true)
+          RETURNING id, email, 
                     is_guest, member_converted_at,
                     created_at, updated_at, is_active
         `;
@@ -141,9 +131,6 @@ class UserRepository {
         values = [
           userData.id, // Use provided integer ID
           email.toLowerCase(),
-          finalFirstName,
-          finalLastName,
-          phone || null,
           hashedPassword,
           is_guest || false,
           member_converted_at || null
@@ -152,21 +139,18 @@ class UserRepository {
         // For new users, let database auto-generate integer ID
         query = `
           INSERT INTO identity_service.users (
-            email, first_name, last_name, phone, password_hash, 
+            email, password_hash, 
             is_guest, member_converted_at,
             created_at, updated_at, is_active
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), true)
-          RETURNING id, email, first_name, last_name, phone, 
+          VALUES ($1, $2, $3, $4, NOW(), NOW(), true)
+          RETURNING id, email, 
                     is_guest, member_converted_at,
                     created_at, updated_at, is_active
         `;
         
         values = [
           email.toLowerCase(),
-          finalFirstName,
-          finalLastName,
-          phone || null,
           hashedPassword,
           is_guest || false,
           member_converted_at || null
@@ -210,9 +194,6 @@ class UserRepository {
       
       // Include new member conversion fields in allowed updates
       const allowedFields = [
-        'first_name', 
-        'last_name', 
-        'phone', 
         'is_guest', 
         'member_converted_at',
         'is_active'
@@ -240,7 +221,7 @@ class UserRepository {
         UPDATE identity_service.users 
         SET ${updates.join(', ')}
         WHERE id = $${paramIndex} AND is_active = true
-        RETURNING id, email, first_name, last_name, phone, 
+        RETURNING id, email, 
                   is_guest, member_converted_at,
                   created_at, updated_at, is_active
       `;
@@ -303,7 +284,7 @@ class UserRepository {
       logger.debug('Verifying user password', { email });
       
       const query = `
-        SELECT id, email, first_name, last_name, phone, password_hash, created_at, updated_at, is_active
+        SELECT id, email, password_hash, created_at, updated_at, is_active
         FROM identity_service.users 
         WHERE email = $1 AND is_active = true
       `;

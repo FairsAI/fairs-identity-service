@@ -11,10 +11,9 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     email VARCHAR(255) UNIQUE NOT NULL,
-    first_name VARCHAR(100),
-    last_name VARCHAR(100),
-    phone VARCHAR(20),
     password_hash VARCHAR(255),
+    is_guest BOOLEAN DEFAULT false,
+    member_converted_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     is_active BOOLEAN DEFAULT true
@@ -212,7 +211,7 @@ COMMENT ON TABLE cross_merchant_identities IS 'Universal user identities that sp
 COMMENT ON TABLE device_user_associations IS 'Links devices to universal user identities with merchant-specific context';
 COMMENT ON TABLE cross_merchant_users IS 'Maps merchant-specific user IDs to universal identities';
 COMMENT ON TABLE verification_events IS 'Tracks identity verification attempts and results';
-COMMENT ON TABLE users IS 'Basic user information and authentication data';
+COMMENT ON TABLE users IS 'Core user identity table. Profile data (name, phone, preferences) now managed by Profile Service.';
 
 -- Sample data (optional - remove in production)
 -- INSERT INTO cross_merchant_identities (identity_key) VALUES (uuid_generate_v4());
