@@ -200,10 +200,30 @@ router.use(financialDataRateLimit);
 // ============================================================================
 
 /**
- * Create customer and save address during checkout (no authentication required)
- * This creates permanent customer profiles - users become members upon transaction completion
+ * Create customer and save address during checkout - DEPRECATED
+ * Address management has moved to Profile Service
  * POST /api/checkout/register
  */
+router.post('/checkout/register', (req, res) => {
+  logger.warn('Deprecated checkout/register endpoint accessed', {
+    email: req.body.email,
+    isCheckout: true
+  });
+  
+  res.status(410).json({
+    success: false,
+    error: 'Gone',
+    message: 'Checkout registration with addresses has been moved to Profile Service. Please use the new checkout flow via the API Orchestrator.',
+    migration: {
+      oldEndpoint: '/api/checkout/register',
+      newService: 'checkout-service',
+      newFlow: 'Use separate user creation and address management endpoints',
+      documentation: 'https://docs.fairs.com/api/migration/checkout'
+    }
+  });
+});
+
+/* Original implementation commented out
 router.post('/checkout/register', validateFinancialInput, async (req, res) => {
   logger.info({
     message: 'Enhanced Schema: Checkout registration request',
@@ -301,6 +321,7 @@ router.post('/checkout/register', validateFinancialInput, async (req, res) => {
     });
   }
 });
+*/
 
 // Apply authentication to authenticated routes only
 router.use('/addresses', authenticateRequest);
@@ -308,12 +329,42 @@ router.use('/users', authenticateRequest);
 
 // ============================================================================
 // ENHANCED SCHEMA: MULTIPLE ADDRESS MANAGEMENT
+// DEPRECATED: Address management has been moved to Profile Service
+// These endpoints are disabled and will be removed in a future version
 // ============================================================================
 
 /**
- * Save user address with label and nickname - SECURITY FIXED
+ * DEPRECATED - Address management moved to Profile Service
+ * All address endpoints now return deprecation notice
+ */
+const addressDeprecationHandler = (req, res) => {
+  logger.warn('Deprecated address endpoint accessed', {
+    method: req.method,
+    path: req.path,
+    userId: req.body?.userId || req.params?.userId
+  });
+  
+  res.status(410).json({
+    success: false,
+    error: 'Gone',
+    message: 'Address management has been moved to Profile Service. Please use the new address endpoints via the API Orchestrator.',
+    migration: {
+      oldEndpoint: req.path,
+      newService: 'profile-service',
+      newEndpoint: req.path.replace('/api/addresses', '/api/v1/users/{userId}/addresses'),
+      documentation: 'https://docs.fairs.com/api/migration/addresses'
+    }
+  });
+};
+
+/**
+ * Save user address with label and nickname - DEPRECATED
  * POST /api/addresses
  */
+router.post('/addresses', addressDeprecationHandler);
+
+// Original implementation commented out for reference
+/*
 router.post('/addresses', validateFinancialInput, async (req, res) => {
   logger.info({
     message: 'Enhanced Schema: Save user address request',
@@ -438,10 +489,52 @@ router.post('/addresses', validateFinancialInput, async (req, res) => {
   }
 });
 
+*/
+
 /**
- * Get all addresses for user - SECURITY FIXED
+ * Get all addresses for user - DEPRECATED
  * GET /api/addresses/:userId
  */
+router.get('/addresses/:userId', addressDeprecationHandler);
+
+/**
+ * Get shipping addresses for user - DEPRECATED
+ * GET /api/addresses/:userId/shipping
+ */
+router.get('/addresses/:userId/shipping', addressDeprecationHandler);
+
+/**
+ * Get billing addresses for user - DEPRECATED
+ * GET /api/addresses/:userId/billing
+ */
+router.get('/addresses/:userId/billing', addressDeprecationHandler);
+
+/**
+ * Update address - DEPRECATED
+ * PUT /api/addresses/:addressId
+ */
+router.put('/addresses/:addressId', addressDeprecationHandler);
+
+/**
+ * Delete address - DEPRECATED
+ * DELETE /api/addresses/:addressId
+ */
+router.delete('/addresses/:addressId', addressDeprecationHandler);
+
+/**
+ * Set address as default - DEPRECATED
+ * POST /api/addresses/:addressId/default
+ */
+router.post('/addresses/:addressId/default', addressDeprecationHandler);
+
+/**
+ * Track address usage - DEPRECATED
+ * POST /api/addresses/:addressId/used
+ */
+router.post('/addresses/:addressId/used', addressDeprecationHandler);
+
+// Original implementations commented out - see below for reference
+/*
 router.get('/addresses/:userId', validateUserOwnership, async (req, res) => {
   logger.info({
     message: 'Enhanced Schema: Get user addresses request',
@@ -716,7 +809,7 @@ router.post('/addresses/:addressId/used', async (req, res) => {
     });
   }
 });
-
+*/
 
 // ============================================================================
 // ENHANCED SCHEMA: COMPLETE USER PROFILE

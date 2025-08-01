@@ -2,6 +2,12 @@ const { dbConnection } = require('../database/db-connection');
 const { logger } = require('../utils/logger');
 const { v4: uuidv4 } = require('uuid');
 
+/**
+ * @deprecated Address management has been moved to Profile Service
+ * This repository is retained for data migration purposes only
+ * DO NOT ADD NEW FEATURES OR MODIFY
+ * See ADDRESS_MIGRATION_NOTICE.md for migration details
+ */
 class UserAddressRepository {
   constructor() {
     this.db = dbConnection;
